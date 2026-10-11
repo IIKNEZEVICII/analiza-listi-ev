@@ -71,4 +71,43 @@ if nalozena_slika is not None:
             st.metric("Število kapljic", f"{st_kapljic}")
         with col2:
             st.metric("Pokritost", f"{pokritost:.1f} kap/cm²")
-            st.metric("Pokritost", f"{pokritost:.1f} kap/cm²")
+            
+        # Gumb za dodajanje lističa v zgodovino
+        if st.button("💾 Shrani ta rezultat v tabelo"):
+            st.session_state.zgodovina.append({
+                "Vzorec": f"Listič {st.session_state.stevec}",
+                "Število kapljic": st_kapljic,
+                "Pokritost (kap/cm²)": round(pokritost, 1)
+            })
+            st.session_state.stevec += 1
+            st.success(f"Uspešno shranjeno! (Skupaj shranjenih: {len(st.session_state.zgodovina)})")
+
+        st.markdown("<hr>", unsafe_allow_html=True)
+        st.markdown("#### Vizualni pregled detekcije")
+        
+        prosojnost = st.slider(
+            "Izberite raven prikaza črno-bele maske (0 = original, 1 = maska):", 
+            min_value=0.0, max_value=1.0, value=0.5, step=0.05
+        )
+        
+        maska_rgb = cv2.cvtColor(maska, cv2.COLOR_GRAY2RGB)
+        prikazna_slika = cv2.addWeighted(izrez, 1.0 - prosojnost, maska_rgb, prosojnost, 0)
+        st.image(prikazna_slika, use_container_width=True, channels="RGB")
+        
+# --- 3. PRIKAZ TABELE IN IZVOZ PODATKOV ---
+if st.session_state.zgodovina:
+    st.markdown("---")
+    st.markdown("#### 📋 Shranjeni rezultati (Tabela)")
+    
+    st.dataframe(st.session_state.zgodovina, use_container_width=True)
+    
+    csv_podatki = ustvari_csv(st.session_state.zgodovina)
+    st.download_button(
+        label="⬇️ Prenesi rezultate (.csv)",
+        data=csv_podatki,
+        file_name="analiza_skropljenja_rezultati.csv",
+        mime="text/csv"
+    )
+
+if nalozena_slika is None:
+    st.info("Tapnite zgoraj za izbiro slike ali zajem fotografije s telefonovo kamero.")
