@@ -46,7 +46,7 @@ def ustvari_csv(podatki):
 
 # --- 2. UPORABNIŠKI VMESNIK ---
 st.markdown("### 🌾 Analiza škropljenja")
-st.caption("Hitra in natančna terenska analiza vodoobčutljivih lističev.")
+st.caption("Aplikacija za hiter pregled kakovosti škropljenja.")
 
 # Uporabimo samo klasičen uploader, ki na telefonu avtomatsko sproži OS meni za kamero/galerijo
 nalozena_slika = st.file_uploader(
@@ -110,4 +110,4 @@ if st.session_state.zgodovina:
     )
 
 if nalozena_slika is None:
-    st.info("Tapnite zgoraj za izbiro slike ali zajem fotografije s telefonovo kamero.")
+    st.info("Za analizo naložite obstoječo sliko ali naredite novo.")
