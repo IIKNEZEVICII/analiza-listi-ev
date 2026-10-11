@@ -65,7 +65,9 @@ if nalozena_slika is not None:
     if status == "NAPAKA":
         st.error(izrez) 
     else:
-        st.markdown("#### Rezultati analize")
+    st.markdown("#### Rezultati analize")
         col1, col2 = st.columns(2)
         with col1:
-            st.metric("Število kapljic", f
+            st.metric("Število kapljic", f"{st_kapljic}")
+        with col2:
+            st.metric("Pokritost", f"{pokritost:.1f} kap/cm²")
