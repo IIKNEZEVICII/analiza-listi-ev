@@ -60,6 +60,12 @@ def analiziraj_sliko(slika_rgb):
     slika_izrez = cv2.warpPerspective(slika_rgb, matrika, (sirina_nova, visina_nova))
     slika_izrez = slika_izrez[3:-3, 3:-3] # Odstranimo robove zaradi artefaktov transformacije
     
+    # --- NOVO: VEDNO LEŽEČA POSTAVITEV ---
+    # Če je bil listič prepoznan kot pokončen (višina > širina), 
+    # ga zavrtimo za 90 stopinj v smeri urinega kazalca, da bo vedno ležeč.
+    if visina_levo > sirina_zgoraj:
+        slika_izrez = cv2.rotate(slika_izrez, cv2.ROTATE_90_CLOCKWISE)
+        
     um_na_piko = 1000 / pike_na_mm_cilj
     um2_na_piko = um_na_piko ** 2
     
@@ -116,5 +122,4 @@ def analiziraj_sliko(slika_rgb):
     
     pokritost_na_cm2 = veljavne_kapljice / povrsina_listica_cm2 if povrsina_listica_cm2 > 0 else 0
     
-    # Vrnemo uspeh in izračunane podatke, ki jih bo porabila aplikacija.py
     return "USPEH", slika_izrez, maska_filtrirana, veljavne_kapljice, pokritost_na_cm2
