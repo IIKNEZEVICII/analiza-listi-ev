@@ -85,3 +85,41 @@ def analiziraj_sliko(slika_rgb):
     maska_kapljic = cv2.bitwise_or(maska_temnih, maska_hsv)
     
     # --- KORAK 3: ČIŠČENJE IN KONVEKSNA LUPINA ---
+    jedro_zapiranje = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
+    maska_sklenjena = cv2.morphologyEx(maska_kapljic, cv2.MORPH_CLOSE, jedro_zapiranje)
+    
+    konture_maske, _ = cv2.findContours(maska_sklenjena, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    maska_zapolnjena = np.zeros_like(maska_sklenjena)
+    for kontura in konture_maske:
+        lupina = cv2.convexHull(kontura)
+        cv2.drawContours(maska_zapolnjena, [lupina], -1, 255, -1)
+        
+    jedro_odpiranje = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    maska_cista = cv2.morphologyEx(maska_zapolnjena, cv2.MORPH_OPEN, jedro_odpiranje)
+    
+    # --- KORAK 4: IZRAČUNI (Filtriranje < 50 um in cm2) ---
+    koncne_konture, _ = cv2.findContours(maska_cista, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    veljavne_kapljice = 0
+    maska_filtrirana = np.zeros_like(maska_cista)
+    
+    for kontura in koncne_konture:
+        povrsina_px = cv2.contourArea(kontura)
+        povrsina_um2 = povrsina_px * um2_na_piko
+        
+        if povrsina_um2 > 0:
+            premer_um = 2 * np.sqrt(povrsina_um2 / np.pi)
+            
+            # POGOJ 50 um: shranimo le dovolj velike kapljice
+            if premer_um >= 50:
+                veljavne_kapljice += 1
+                cv2.drawContours(maska_filtrirana, [kontura], -1, 255, -1)
+                
+    # Izračunamo fizično površino obrezanega lističa v cm2
+    dejanska_sirina_mm = (slika_izrez.shape[1] / pike_na_mm_cilj)
+    dejanska_visina_mm = (slika_izrez.shape[0] / pike_na_mm_cilj)
+    povrsina_listica_cm2 = (dejanska_sirina_mm / 10) * (dejanska_visina_mm / 10)
+    
+    pokritost_na_cm2 = veljavne_kapljice / povrsina_listica_cm2 if povrsina_listica_cm2 > 0 else 0
+    
+    return "USPEH", slika_izrez, maska_filtrirana, veljavne_kapljice, pokritost_na_cm2
