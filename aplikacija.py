@@ -4,25 +4,40 @@ import numpy as np
 import matplotlib.pyplot as plt
 from PIL import Image
 
-# Nastavitev strani
+# --- MODERNIZIRANE NASTAVITVE STRANI ---
 st.set_page_config(
     page_title="Analiza Škropljenja",
     page_icon="💧",
-    layout="wide"
+    layout="centered"  # Centriran layout za čist, minimalističen videz na vseh napravah
 )
 
-# Skriti privzeto Streamlit glavo/nogo za čistejši videz
-hide_style = """
+# Minimalistični CSS stil za čiste robove, moderne kartice in skrite standardne elemente Streamlita
+st.markdown("""
     <style>
+    /* Skrijemo privzeti Streamlit meni in nogo */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
+    
+    /* Glavni stil ozadja in tipografije */
+    .main {
+        padding: 2rem 1rem;
+    }
+    
+    /* Minimalistične kartice za rezultate */
+    .metric-card {
+        background-color: rgba(128, 128, 128, 0.05);
+        border: 1px solid rgba(128, 128, 128, 0.15);
+        padding: 16px;
+        border-radius: 12px;
+        text-align: center;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.02);
+    }
     </style>
-"""
-st.markdown(hide_style, unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
 def analiziraj_sliko(slika_rgb):
-    """Funkcija, ki vsebuje algoritem za analizo lističa"""
+    """Funkcija za obdelavo in analizo vodno občutljivega lističa"""
     #--- KORAK 2: AVTOMATSKI IZREZ ---
     hsv_orig = cv2.cvtColor(slika_rgb, cv2.COLOR_RGB2HSV)
     spodnja_rumena = np.array([15, 80, 80])
@@ -44,7 +59,7 @@ def analiziraj_sliko(slika_rgb):
             break
             
     if oglisca is None or len(oglisca) != 4:
-        return None, "Napaka: Prepoznava 4 robov lističa ni uspela. Poskusite z drugo sliko."
+        return None, "Napaka: Prepoznava robov lističa ni uspela. Poskusite z drugo sliko."
 
     # Ravnanje lističa
     tocke = oglisca.reshape(4, 2)
@@ -95,7 +110,7 @@ def analiziraj_sliko(slika_rgb):
     
     maska_kapljic = cv2.bitwise_or(maska_temnih, maska_hsv)
 
-    # --- KORAK 4: ZAPOLNJEVANJE LUKENJ IN ČIŠČENJE ---
+    # --- KORAK 4: ČIŠČENJE IN KONVEKSNA LUPINA ---
     jedro_zapiranje = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
     maska_sklenjena = cv2.morphologyEx(maska_kapljic, cv2.MORPH_CLOSE, jedro_zapiranje)
     
@@ -109,7 +124,7 @@ def analiziraj_sliko(slika_rgb):
     jedro_odpiranje = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     maska_cista = cv2.morphologyEx(maska_zapolnjena, cv2.MORPH_OPEN, jedro_odpiranje)
 
-    #--- KORAK 5: IZRAČUN POKRITOSTI IN PREMERA ---
+    #--- KORAK 5: IZRAČUNI ---
     koncne_konture, _ = cv2.findContours(maska_cista, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     stevilo_kapljic = len(koncne_konture)
     
@@ -128,7 +143,7 @@ def analiziraj_sliko(slika_rgb):
     povrsina_listica_px = slika_izrez.shape[0] * slika_izrez.shape[1]
     odstotek_pokritosti = (povrsina_vseh_kapljic_px / povrsina_listica_px) * 100 if povrsina_listica_px > 0 else 0
 
-    # Priprava slike za prikaz
+    # Priprava vizualizacije
     zoom_y_start, zoom_y_end = int(slika_izrez.shape[0]*0.2), int(slika_izrez.shape[0]*0.5)
     zoom_x_start, zoom_x_end = int(slika_izrez.shape[1]*0.2), int(slika_izrez.shape[1]*0.8)
     zoom_original = slika_izrez[zoom_y_start:zoom_y_end, zoom_x_start:zoom_x_end]
@@ -137,95 +152,87 @@ def analiziraj_sliko(slika_rgb):
     prikaz_zooma = zoom_original.copy()
     prikaz_zooma[zoom_maska > 0] = [255, 0, 0]
 
-    # Grafikon detekcije
-    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 5), gridspec_kw={'width_ratios': [1, 1, 1.2]})
+    # Grafikon z minimalističnim stilom (brez odvečnih robov)
+    plt.style.use('seaborn-v0_8-white' if 'seaborn-v0_8-white' in plt.style.available else 'default')
+    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(14, 4.5), gridspec_kw={'width_ratios': [1, 1, 1.2]})
+    
     ax1.imshow(slika_izrez)
-    ax1.set_title('Originalni izrez', fontsize=12)
+    ax1.set_title('Izrez', fontsize=10, fontweight='medium', pad=10)
     ax1.axis('off')
     
     ax2.imshow(maska_cista, cmap='gray')
-    ax2.set_title('Detektirana maska', fontsize=12)
+    ax2.set_title('Maska', fontsize=10, fontweight='medium', pad=10)
     ax2.axis('off')
     
     ax3.imshow(prikaz_zooma)
-    ax3.set_title('Bližnji posnetek (rdeča = kapljice)', fontsize=12)
+    ax3.set_title('Detekcija', fontsize=10, fontweight='medium', pad=10)
     ax3.axis('off')
     
     plt.tight_layout()
 
-    # Histogram
-    fig_hist, ax_hist = plt.subplots(figsize=(9, 4))
+    # Histogram velikosti kapljic
+    fig_hist, ax_hist = plt.subplots(figsize=(8, 3.5))
     if stevilo_kapljic > 0:
-        ax_hist.hist(premeri_um, bins=40, color='#1f77b4', edgecolor='black', alpha=0.7)
-        ax_hist.set_title('Porazdelitev velikosti kapljic', fontsize=12)
-        ax_hist.set_xlabel('Premer kapljice ($\mu$m)')
-        ax_hist.set_ylabel('Število kapljic')
-        ax_hist.grid(axis='y', linestyle='--', alpha=0.7)
+        ax_hist.hist(premeri_um, bins=35, color='#2563eb', edgecolor='none', alpha=0.85)
+        ax_hist.set_title('Porazdelitev velikosti kapljic', fontsize=10, fontweight='medium', pad=10)
+        ax_hist.set_xlabel('Premer ($\mu$m)', fontsize=9)
+        ax_hist.set_ylabel('Število', fontsize=9)
+        ax_hist.grid(axis='y', linestyle=':', alpha=0.5)
+        ax_hist.spines['top'].set_visible(False)
+        ax_hist.spines['right'].set_visible(False)
     
     return fig, fig_hist, stevilo_kapljic, odstotek_pokritosti, premeri_um
 
 # ==================== UPORABNIŠKI VMESNIK ====================
 
-# Stranska vrstica za navodila in nastavitve
-with st.sidebar:
-    st.image("https://img.icons8.com/color/96/combo-chart.png", width=70)
-    st.header("O aplikaciji")
-    st.markdown("""
-    Ta napredna aplikacija omogoča hitro ter terensko analizo **vodno občutljivih lističev** za ocenjevanje kakovosti škropljenja.
-    
-    * **Samodejni izrez** robov lističa
-    * **Detekcija** kapljic (nad ~50 µm)
-    * **Izračun** pokritosti v %
-    """)
-    st.markdown("---")
-    st.caption("Razvil: Matej Knežević")
+# Minimalistična glava
+st.markdown("### 💧 Analiza Škropljenja")
+st.caption("Hitra in natančna terenska analiza vodno občutljivih lističev.")
 
-# Glavni naslov z lepšim dizajnom
-st.title("🌾 Pametna analiza škropljenja")
-st.markdown("Naložite ali posnemite sliko lističa s kamero telefona. Sistem bo samodejno izvedel geometrijski izrez in analizo kapljic.")
+st.markdown("")
 
-# Prostor za nalaganje datoteke
-st.markdown("### 📸 Vnos slike")
+# Polje za nalaganje slike
 nalozena_slika = st.file_uploader(
-    "Izberite sliko lističa iz galerije ali zajemite fotografijo:", 
-    type=['jpg', 'jpeg', 'png']
+    "Naložite sliko lističa (kamera ali galerija)", 
+    type=['jpg', 'jpeg', 'png'],
+    label_visibility="collapsed"
 )
 
 if nalozena_slika is not None:
     image = Image.open(nalozena_slika)
     slika_rgb = np.array(image)
     
-    # Prikaz napredka z animiranim sporočilom
-    with st.spinner("🔄 Obdelujem sliko in izvajam algoritem... Prosimo, počakajte."):
+    with st.spinner("Obdelujem podatke..."):
         rezultat = analiziraj_sliko(slika_rgb)
 
     if len(rezultat) == 2:
         st.error(rezultat[1])
     else:
         fig, fig_hist, st_kapljic, pokritost, premeri = rezultat
-        st.success("✅ Analiza je bila uspešno zaključena!")
-
-        st.markdown("---")
-        st.subheader("📊 Rezultati analize")
         
-        # Prikaz v lepših metričnih karticah
+        st.markdown("")
+        st.markdown("#### Rezultati analize")
+        
+        # Prikaz čistih in modernih metričnih kartic
         col1, col2, col3 = st.columns(3)
-        col1.metric(label="Skupno število kapljic", value=f"{st_kapljic:,}")
-        col2.metric(label="Odstotek pokritosti", value=f"{pokritost:.2f} %")
-        
-        povprecen_premer = np.mean(premeri) if premeri else 0
-        col3.metric(label="Povprečni premer kapljic", value=f"{povprecen_premer:.0f} µm")
+        with col1:
+            st.metric("Število kapljic", f"{st_kapljic:,}")
+        with col2:
+            st.metric("Pokritost", f"{pokritost:.2f} %")
+        with col3:
+            povprecen_premer = np.mean(premeri) if premeri else 0
+            st.metric("Povprečni premer", f"{povprecen_premer:.0f} µm")
 
-        st.markdown("---")
+        st.markdown("<br>", unsafe_allow_html=True)
         
-        # Urejanje rezultatov v zavihke za lepši pregled (še posebej na telefonu)
-        zavisek1, zavisek2 = st.tabs(["🔍 Vizualizacija detekcije", "📈 Porazdelitev velikosti"])
+        # Elegantni zavihki za grafični prikaz
+        tab1, tab2 = st.tabs(["Vizualizacija", "Histogram"])
         
-        with zavisek1:
-            st.pyplot(fig)
+        with tab1:
+            st.pyplot(fig, use_container_width=True)
             
-        with zavisek2:
-            st.pyplot(fig_hist)
+        with tab2:
+            st.pyplot(fig_hist, use_container_width=True)
 else:
-    # Prikaz začetnega navodila, ko slika še ni naložena
-    st.info("👆 Prosimo, naložite sliko zgoraj, da se prikažejo rezultati in grafi.")
+    # Čist in nevsiljiv namig
+    st.info("👆 Tapnite zgoraj za izbiro slike ali zajem fotografije s telefonovo kamero.")
