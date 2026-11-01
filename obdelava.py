@@ -1,98 +1,131 @@
-import streamlit as st
 import cv2
 import numpy as np
-from PIL import Image
-from obdelava import analiziraj_sliko
 
-st.set_page_config(page_title="Analiza škropljenja", layout="centered")
-
-if 'zgodovina' not in st.session_state:
-    st.session_state.zgodovina = []
-    st.session_state.stevec = 1
-
-st.markdown("""
-<style>
-#MainMenu {visibility: hidden;}
-footer {visibility: hidden;}
-header {visibility: hidden;}
-.metric-card {
-    background-color: rgba(128,128,128,0.05);
-    border: 1px solid rgba(128,128,128,0.15);
-    padding: 16px;
-    border-radius: 12px;
-    text-align: center;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.02);
-}
-</style>
-""", unsafe_allow_html=True)
-
-@st.cache_data
-def procesiraj_sliko(slika_array):
-    return analiziraj_sliko(slika_array)
-
-def ustvari_csv(podatki):
-    glava = "Vzorec,Stevilo_odtisov,Pokritost_odstotek\n"
-    vrstice = [f"{p['Vzorec']},{p['Število odtisov']},{p['Pokritost (%)']}" for p in podatki]
-    return (glava + "\n".join(vrstice)).encode('utf-8')
-
-st.markdown("### 🌾 Analiza škropljenja")
-st.caption("Aplikacija za hiter pregled kakovosti škropljenja.")
-
-nalozena_slika = st.file_uploader(
-    "Naložite sliko ali odprite kamero", 
-    type=['jpg', 'jpeg', 'png'], 
-    label_visibility="collapsed"
-)
-
-if nalozena_slika is not None:
-    image = Image.open(nalozena_slika)
-    slika_rgb = np.array(image)
+def analiziraj_sliko(slika_rgb):
+    """Funkcija za obdelavo in analizo vodoobčutljivega lističa"""
     
-    with st.spinner("Obdelujem podatke (izločam kapljice < 50 µm)..."):
-        status, izrez, maska, stevilo_odtisov, pokritost = procesiraj_sliko(slika_rgb)
+    # --- KORAK 1: AVTOMATSKI IZREZ ---
+    hsv_orig = cv2.cvtColor(slika_rgb, cv2.COLOR_RGB2HSV)
+    spodnja_rumena = np.array([15, 80, 80])
+    zgornja_rumena = np.array([45, 255, 255])
+    maska_rumene = cv2.inRange(hsv_orig, spodnja_rumena, zgornja_rumena)
+    
+    konture, _ = cv2.findContours(maska_rumene, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not konture:
+        return "NAPAKA", "Napaka: Na sliki ni rumenega lističa.", None, None, None
         
-    if status == "NAPAKA":
-        st.error(izrez) 
-    else:
-        st.markdown("#### Rezultati analize")
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Število odtisov", f"{stevilo_odtisov}")
-        with col2:
-            st.metric("Pokritost", f"{pokritost:.2f} %")
+    najvecja_kontura = max(konture, key=cv2.contourArea)
+    obseg = cv2.arcLength(najvecja_kontura, True)
+    
+    oglisca = None
+    # Uporaba originalne, najbolj zanesljive metode iskanja oglišč
+    for faktor in np.arange(0.01, 0.1, 0.005):
+        temp_oglisca = cv2.approxPolyDP(najvecja_kontura, faktor * obseg, True)
+        if len(temp_oglisca) == 4:
+            oglisca = temp_oglisca
+            break
             
-        if st.button("💾 Shrani ta rezultat v tabelo"):
-            st.session_state.zgodovina.append({
-                "Vzorec": f"Listič {st.session_state.stevec}",
-                "Število odtisov": stevilo_odtisov,
-                "Pokritost (%)": round(pokritost, 2)
-            })
-            st.session_state.stevec += 1
-            st.success(f"Uspešno shranjeno! (Skupaj shranjenih: {len(st.session_state.zgodovina)})")
-
-        st.markdown("<hr>", unsafe_allow_html=True)
-        st.markdown("#### Vizualni pregled detekcije")
+    if oglisca is None or len(oglisca) != 4:
+        return "NAPAKA", "Napaka: Prepoznava robov lističa ni uspela. Poskusite z drugo sliko.", None, None, None
         
-        prosojnost = st.slider(
-            "Izberite raven prikaza črno-bele maske (0 = original, 1 = maska):", 
-            min_value=0.0, max_value=1.0, value=0.5, step=0.05
-        )
+    # Ravnanje lističa
+    tocke = oglisca.reshape(4, 2)
+    urejene_tocke = np.zeros((4, 2), dtype="float32")
+    vsota = tocke.sum(axis=1)
+    urejene_tocke[0] = tocke[np.argmin(vsota)]
+    urejene_tocke[2] = tocke[np.argmax(vsota)]
+    razlika = np.diff(tocke, axis=1)
+    urejene_tocke[1] = tocke[np.argmin(razlika)]
+    urejene_tocke[3] = tocke[np.argmax(razlika)]
+    
+    sirina_zgoraj = np.linalg.norm(urejene_tocke[0] - urejene_tocke[1])
+    visina_levo = np.linalg.norm(urejene_tocke[0] - urejene_tocke[3])
+    
+    # --- PRILAGODITEV DIMENZIJ IN KRČENJA ---
+    # Upoštevamo, da se WSP (Water Sensitive Paper) nekoliko skrči (ocena cca. 1.5%)
+    faktor_krcenja = 0.985
+    referencna_visina_mm = 76.0 * faktor_krcenja
+    
+    # Fiksiramo samo daljšo stranico na referenčno višino, krajša stranica (širina) se prilagaja
+    if visina_levo > sirina_zgoraj:
+        visina_mm = referencna_visina_mm
+        sirina_mm = visina_mm * (sirina_zgoraj / visina_levo)
+    else:
+        sirina_mm = referencna_visina_mm
+        visina_mm = sirina_mm * (visina_levo / sirina_zgoraj)
         
-        maska_rgb = cv2.cvtColor(maska, cv2.COLOR_GRAY2RGB)
-        prikazna_slika = cv2.addWeighted(izrez, 1.0 - prosojnost, maska_rgb, prosojnost, 0)
-        st.image(prikazna_slika, use_container_width=True, channels="RGB")
+    pike_na_mm_cilj = 60.0
+    sirina_nova = int(sirina_mm * pike_na_mm_cilj)
+    visina_nova = int(visina_mm * pike_na_mm_cilj)
+    
+    ciljne_tocke = np.float32([
+        [0, 0],
+        [sirina_nova - 1, 0],
+        [sirina_nova - 1, visina_nova - 1],
+        [0, visina_nova - 1]
+    ])
+    
+    matrika = cv2.getPerspectiveTransform(urejene_tocke, ciljne_tocke)
+    slika_izrez = cv2.warpPerspective(slika_rgb, matrika, (sirina_nova, visina_nova))
+    slika_izrez = slika_izrez[3:-3, 3:-3] # Odstranimo robove zaradi artefaktov transformacije
+    
+    # Vedno ležeča postavitev
+    if visina_levo > sirina_zgoraj:
+        slika_izrez = cv2.rotate(slika_izrez, cv2.ROTATE_90_CLOCKWISE)
         
-if st.session_state.zgodovina:
-    st.markdown("---")
-    st.markdown("#### 📋 Shranjeni rezultati (Tabela)")
-    st.dataframe(st.session_state.zgodovina, use_container_width=True)
-    csv_podatki = ustvari_csv(st.session_state.zgodovina)
-    st.download_button(
-        label="⬇️ Prenesi rezultate (.csv)",
-        data=csv_podatki,
-        file_name="analiza_skropljenja_rezultati.csv",
-        mime="text/csv"
+    um_na_piko = 1000 / pike_na_mm_cilj
+    um2_na_piko = um_na_piko ** 2
+    
+    # --- KORAK 2: DETEKCIJA KAPLJIC ---
+    siva = cv2.cvtColor(slika_izrez, cv2.COLOR_RGB2GRAY)
+    maska_kontrasta = cv2.adaptiveThreshold(
+        siva, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY_INV, 21, 7
     )
-
-if nalozena_slika is None:
-    st.info("Za analizo naložite obstoječo sliko ali naredite novo.")
+    maska_temnih = cv2.bitwise_and(maska_kontrasta, cv2.bitwise_not(cv2.inRange(siva, 175, 255)))
+    
+    hsv_izrez = cv2.cvtColor(slika_izrez, cv2.COLOR_RGB2HSV)
+    spodnja_modra = np.array([75, 12, 12])
+    zgornja_modra = np.array([165, 255, 255])
+    maska_hsv = cv2.inRange(hsv_izrez, spodnja_modra, zgornja_modra)
+    
+    maska_kapljic = cv2.bitwise_or(maska_temnih, maska_hsv)
+    
+    # --- KORAK 3: ČIŠČENJE IN KONVEKSNA LUPINA ---
+    jedro_zapiranje = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
+    maska_sklenjena = cv2.morphologyEx(maska_kapljic, cv2.MORPH_CLOSE, jedro_zapiranje)
+    
+    konture_maske, _ = cv2.findContours(maska_sklenjena, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    maska_zapolnjena = np.zeros_like(maska_sklenjena)
+    for kontura in konture_maske:
+        lupina = cv2.convexHull(kontura)
+        cv2.drawContours(maska_zapolnjena, [lupina], -1, 255, -1)
+        
+    jedro_odpiranje = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    maska_cista = cv2.morphologyEx(maska_zapolnjena, cv2.MORPH_OPEN, jedro_odpiranje)
+    
+    # --- KORAK 4: NOVI IZRAČUNI (% in število odtisov) ---
+    koncne_konture, _ = cv2.findContours(maska_cista, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    stevilo_odtisov = 0
+    maska_filtrirana = np.zeros_like(maska_cista)
+    
+    for kontura in koncne_konture:
+        povrsina_px = cv2.contourArea(kontura)
+        povrsina_um2 = povrsina_px * um2_na_piko
+        
+        if povrsina_um2 > 0:
+            premer_um = 2 * np.sqrt(povrsina_um2 / np.pi)
+            
+            # Shranimo le kapljice nad 50 mikrometrov
+            if premer_um >= 50:
+                stevilo_odtisov += 1
+                cv2.drawContours(maska_filtrirana, [kontura], -1, 255, -1)
+                
+    # Izračunamo odstotek pokritosti (% = piksli_kapljic / piksli_celotnega_listica * 100)
+    skupno_pikslov_listica = slika_izrez.shape[0] * slika_izrez.shape[1]
+    piksli_kapljic = cv2.countNonZero(maska_filtrirana)
+    
+    pokritost_odstotek = (piksli_kapljic / skupno_pikslov_listica) * 100 if skupno_pikslov_listica > 0 else 0
+    
+    return "USPEH", slika_izrez, maska_filtrirana, stevilo_odtisov, pokritost_odstotek
