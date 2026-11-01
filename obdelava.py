@@ -23,28 +23,22 @@ def analiziraj_sliko(slika_rgb):
         
     najvecja_kontura = max(konture, key=cv2.contourArea)
     
-    # Ustvarimo natančno masko lističa po njegovi DEJANSKI konturi (da kasneje ignoriramo ozadje)
+    # Ustvarimo masko točne oblike lističa po njegovi dejanski konturi
     maska_papirja_celotna = np.zeros(slika_rgb.shape[:2], dtype=np.uint8)
     cv2.drawContours(maska_papirja_celotna, [najvecja_kontura], -1, 255, -1)
     
-    # Uporabimo RAVNI obdajajoči pravokotnik (brez vsiljevanja kotov ali preslikav!)
+    # RAVNI obdajajoči pravokotnik (Brez popačenj!)
     x, y, w, h = cv2.boundingRect(najvecja_kontura)
     
-    # Sliko in masko izrežemo kot z navadnimi škarjami - ohranimo 100% originalna razmerja
+    # Izrežemo sliko in masko - tukaj namerno NE pobarvamo ozadja na belo!
     slika_izrez = slika_rgb[y:y+h, x:x+w].copy()
     maska_izrez = maska_papirja_celotna[y:y+h, x:x+w].copy()
     
-    # Poskrbimo, da je listič vedno ležeč za nadaljnjo obdelavo
+    # Vedno ležeč položaj (daljša stran je širina)
     if h > w:
         slika_izrez = cv2.rotate(slika_izrez, cv2.ROTATE_90_CLOCKWISE)
         maska_izrez = cv2.rotate(maska_izrez, cv2.ROTATE_90_CLOCKWISE)
-        # Zamenjamo w in h spremenljivki
-        temp = w
-        w = h
-        h = temp
-        
-    # Odstranitev ozadja (vse izven neravne konture lističa postane belo)
-    slika_izrez[maska_izrez == 0] = (255, 255, 255)
+        h, w = slika_izrez.shape[:2]
         
     # --- SKALIRANJE (Fiksna dolžina 76mm na daljši stranici) ---
     pike_na_mm_cilj = 60.0
@@ -61,11 +55,11 @@ def analiziraj_sliko(slika_rgb):
     um2_na_piko = um_na_piko ** 2
     
     # =================================================================
-    # KORAK 2: DETEKCIJA IN ČIŠČENJE (IZ ORIGINALNE KODE OBDELAVA 3)
+    # KORAK 2: ORIGINALNA DETEKCIJA KAPLJIC IN ČIŠČENJE
     # =================================================================
     siva = cv2.cvtColor(slika_skalirana, cv2.COLOR_RGB2GRAY)
     
-    # Uporabimo originalni adaptivni prag (21, 7)
+    # Tvoj originalni adaptivni prag
     maska_kontrasta = cv2.adaptiveThreshold(
         siva, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
         cv2.THRESH_BINARY_INV, 21, 7
@@ -79,10 +73,13 @@ def analiziraj_sliko(slika_rgb):
     
     maska_kapljic = cv2.bitwise_or(maska_temnih, maska_hsv)
     
-    # Omejimo iskanje strogo na masko lističa, da ne zaznava belega ozadja/mize
-    maska_kapljic = cv2.bitwise_and(maska_kapljic, maska_skalirana)
+    # KLJUČNO ZA POPRAVEK: Masko lističa skrčimo za nekaj pikslov navznoter (cv2.erode), 
+    # da se povsem izognemo temnemu in problematičnemu robu, nato pa odrežemo ozadje.
+    rob_jedro = np.ones((7, 7), np.uint8)
+    maska_notranjosti = cv2.erode(maska_skalirana, rob_jedro)
+    maska_kapljic = cv2.bitwise_and(maska_kapljic, maska_notranjosti)
     
-    # Originalno čiščenje z večjim jedrom (9x9) in konveksno lupino
+    # Tvoje originalno čiščenje
     jedro_zapiranje = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
     maska_sklenjena = cv2.morphologyEx(maska_kapljic, cv2.MORPH_CLOSE, jedro_zapiranje)
     
@@ -110,18 +107,19 @@ def analiziraj_sliko(slika_rgb):
         if povrsina_um2 > 0:
             premer_um = 2 * np.sqrt(povrsina_um2 / np.pi)
             
-            # Detektiramo samo kapljice nad 50 mikrometrov
+            # Shranimo samo nad 50 mikrometrov
             if premer_um >= 50:
                 stevilo_odtisov += 1
                 cv2.drawContours(maska_filtrirana, [kontura], -1, 255, -1)
                 
-    # Natančen izračun pokritosti v % (piksli kapljic / piksli lističa brez ozadja)
+    # Pokritost izračunana natančno na piksel lističa
     piksli_papirja = cv2.countNonZero(maska_skalirana)
     piksli_kapljic = cv2.countNonZero(maska_filtrirana)
     
     pokritost_odstotek = (piksli_kapljic / piksli_papirja) * 100 if piksli_papirja > 0 else 0
     
-    # Za lepši prikaz v aplikaciji zatemnimo morebitno mizo v kotih izreza
-    slika_prikaz = cv2.bitwise_and(slika_skalirana, slika_skalirana, mask=maska_skalirana)
+    # Sedaj, šele na koncu, pobarvamo mizo v kotih izreza na belo samo za lep prikaz v aplikaciji
+    slika_prikaz = slika_skalirana.copy()
+    slika_prikaz[maska_skalirana == 0] = (255, 255, 255)
     
     return "USPEH", slika_prikaz, maska_filtrirana, stevilo_odtisov, pokritost_odstotek
