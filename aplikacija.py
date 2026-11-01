@@ -38,17 +38,17 @@ header {visibility: hidden;}
 def procesiraj_sliko(slika_array):
     return analiziraj_sliko(slika_array)
 
-# Funkcija za pripravo datoteke za izvoz
+# Funkcija za pripravo datoteke za izvoz (Prilagojeno za nove rezultate)
 def ustvari_csv(podatki):
-    glava = "Vzorec,Stevilo_kapljic,Pokritost_kap_na_cm2\n"
-    vrstice = [f"{p['Vzorec']},{p['Število kapljic']},{p['Pokritost (kap/cm²)']}" for p in podatki]
+    glava = "Vzorec,Stevilo_odtisov,Pokritost_odstotek\n"
+    vrstice = [f"{p['Vzorec']},{p['Število odtisov']},{p['Pokritost (%)']}" for p in podatki]
     return (glava + "\n".join(vrstice)).encode('utf-8')
 
 # --- 2. UPORABNIŠKI VMESNIK ---
 st.markdown("### 🌾 Analiza škropljenja")
 st.caption("Aplikacija za hiter pregled kakovosti škropljenja.")
 
-# Uporabimo samo klasičen uploader, ki na telefonu avtomatsko sproži OS meni za kamero/galerijo
+# Uporabimo samo klasičen uploader
 nalozena_slika = st.file_uploader(
     "Naložite sliko ali odprite kamero", 
     type=['jpg', 'jpeg', 'png'], 
@@ -60,7 +60,7 @@ if nalozena_slika is not None:
     slika_rgb = np.array(image)
     
     with st.spinner("Obdelujem podatke (izločam kapljice < 50 µm)..."):
-        status, izrez, maska, st_kapljic, pokritost = procesiraj_sliko(slika_rgb)
+        status, izrez, maska, stevilo_odtisov, pokritost = procesiraj_sliko(slika_rgb)
         
     if status == "NAPAKA":
         st.error(izrez) 
@@ -68,16 +68,16 @@ if nalozena_slika is not None:
         st.markdown("#### Rezultati analize")
         col1, col2 = st.columns(2)
         with col1:
-            st.metric("Število kapljic", f"{st_kapljic}")
+            st.metric("Število odtisov", f"{stevilo_odtisov}")
         with col2:
-            st.metric("Pokritost", f"{pokritost:.1f} kap/cm²")
+            st.metric("Pokritost", f"{pokritost:.2f} %")
             
         # Gumb za dodajanje lističa v zgodovino
         if st.button("💾 Shrani ta rezultat v tabelo"):
             st.session_state.zgodovina.append({
                 "Vzorec": f"Listič {st.session_state.stevec}",
-                "Število kapljic": st_kapljic,
-                "Pokritost (kap/cm²)": round(pokritost, 1)
+                "Število odtisov": stevilo_odtisov,
+                "Pokritost (%)": round(pokritost, 2)
             })
             st.session_state.stevec += 1
             st.success(f"Uspešno shranjeno! (Skupaj shranjenih: {len(st.session_state.zgodovina)})")
