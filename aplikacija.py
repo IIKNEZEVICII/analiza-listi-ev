@@ -34,7 +34,6 @@ header {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
 
-@st.cache_data
 def procesiraj_sliko(slika_array):
     return analiziraj_sliko(slika_array)
 
