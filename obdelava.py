@@ -58,15 +58,24 @@ def analiziraj_sliko(slika_rgb):
     
     # --- KORAK 2: DETEKCIJA KAPLJIC ---
     siva = cv2.cvtColor(slika_skalirana, cv2.COLOR_RGB2GRAY)
+    
+    # Povečanje lokalnega kontrasta (CLAHE) za izpostavitev bledih kapljic
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    siva_clahe = clahe.apply(siva)
+    
+    # Natančnejši adaptivni prag (manjši blok, manjša C konstanta za večjo občutljivost)
     maska_kontrasta = cv2.adaptiveThreshold(
-        siva, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY_INV, 21, 7
+        siva_clahe, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY_INV, 15, 4
     )
-    maska_temnih = cv2.bitwise_and(maska_kontrasta, cv2.bitwise_not(cv2.inRange(siva, 175, 255)))
+    
+    # Ohranjanje le tistih pik, ki so dejansko temnejše (filtracija šuma na svetlih delih)
+    maska_temnih = cv2.bitwise_and(maska_kontrasta, cv2.bitwise_not(cv2.inRange(siva_clahe, 185, 255)))
     
     hsv_izrez = cv2.cvtColor(slika_skalirana, cv2.COLOR_RGB2HSV)
-    spodnja_modra = np.array([75, 12, 12])
-    zgornja_modra = np.array([165, 255, 255])
+    # Sužena HSV definicija specifično za modre/vijolične WSP odtise
+    spodnja_modra = np.array([85, 30, 30])
+    zgornja_modra = np.array([170, 255, 255])
     maska_hsv = cv2.inRange(hsv_izrez, spodnja_modra, zgornja_modra)
     
     maska_kapljic = cv2.bitwise_or(maska_temnih, maska_hsv)
@@ -75,7 +84,8 @@ def analiziraj_sliko(slika_rgb):
     maska_kapljic = cv2.bitwise_and(maska_kapljic, maska_skalirana)
     
     # --- KORAK 3: ČIŠČENJE ---
-    jedro_zapiranje = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    # Uporaba manjšega jedra (3x3 namesto 5x5), da se ohranijo drobne kapljice
+    jedro_zapiranje = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     maska_sklenjena = cv2.morphologyEx(maska_kapljic, cv2.MORPH_CLOSE, jedro_zapiranje)
     
     konture_maske, _ = cv2.findContours(maska_sklenjena, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
