@@ -15,20 +15,14 @@ def analiziraj_sliko(slika_rgb):
         return "NAPAKA", "Napaka: Na sliki ni rumenega lističa.", None, None, None
         
     najvecja_kontura = max(konture, key=cv2.contourArea)
-    obseg = cv2.arcLength(najvecja_kontura, True)
     
-    oglisca = None
-    for faktor in np.arange(0.01, 0.1, 0.005):
-        temp_oglisca = cv2.approxPolyDP(najvecja_kontura, faktor * obseg, True)
-        if len(temp_oglisca) == 4:
-            oglisca = temp_oglisca
-            break
-            
-    if oglisca is None or len(oglisca) != 4:
-        return "NAPAKA", "Napaka: Prepoznava robov lističa ni uspela. Poskusite z drugo sliko.", None, None, None
-        
-    # Ravnanje lističa
-    tocke = oglisca.reshape(4, 2)
+    # UPORABA minAreaRect ZA NEPRAVILNE OBLIKE
+    # Obdaja tudi natrgane in nepravilne robove v optimalen pravokotnik
+    rect = cv2.minAreaRect(najvecja_kontura)
+    box = cv2.boxPoints(rect)
+    tocke = np.intp(box)
+    
+    # Razvrščanje točk (zgoraj-levo, zgoraj-desno, spodaj-desno, spodaj-levo)
     urejene_tocke = np.zeros((4, 2), dtype="float32")
     vsota = tocke.sum(axis=1)
     urejene_tocke[0] = tocke[np.argmin(vsota)]
@@ -37,18 +31,19 @@ def analiziraj_sliko(slika_rgb):
     urejene_tocke[1] = tocke[np.argmin(razlika)]
     urejene_tocke[3] = tocke[np.argmax(razlika)]
     
-    sirina_zgoraj = np.linalg.norm(urejene_tocke[0] - urejene_tocke[1])
-    visina_levo = np.linalg.norm(urejene_tocke[0] - urejene_tocke[3])
+    sirina_zgoraj_px = np.linalg.norm(urejene_tocke[0] - urejene_tocke[1])
+    visina_levo_px = np.linalg.norm(urejene_tocke[0] - urejene_tocke[3])
     
-    if visina_levo > sirina_zgoraj:
-        sirina_mm, visina_mm = 26.0, 76.0
-    else:
-        sirina_mm, visina_mm = 76.0, 26.0
-        
+    # Referenca je fiksna le za daljšo stranico = 76 mm
     pike_na_mm_cilj = 60.0
-    sirina_nova = int(sirina_mm * pike_na_mm_cilj)
-    visina_nova = int(visina_mm * pike_na_mm_cilj)
     
+    if visina_levo_px > sirina_zgoraj_px:
+        visina_nova = int(76.0 * pike_na_mm_cilj)
+        sirina_nova = int((sirina_zgoraj_px / visina_levo_px) * visina_nova)
+    else:
+        sirina_nova = int(76.0 * pike_na_mm_cilj)
+        visina_nova = int((visina_levo_px / sirina_zgoraj_px) * sirina_nova)
+        
     ciljne_tocke = np.float32([
         [0, 0],
         [sirina_nova - 1, 0],
@@ -60,10 +55,8 @@ def analiziraj_sliko(slika_rgb):
     slika_izrez = cv2.warpPerspective(slika_rgb, matrika, (sirina_nova, visina_nova))
     slika_izrez = slika_izrez[3:-3, 3:-3] # Odstranimo robove zaradi artefaktov transformacije
     
-    # --- NOVO: VEDNO LEŽEČA POSTAVITEV ---
-    # Če je bil listič prepoznan kot pokončen (višina > širina), 
-    # ga zavrtimo za 90 stopinj v smeri urinega kazalca, da bo vedno ležeč.
-    if visina_levo > sirina_zgoraj:
+    # Vedno ležeča postavitev za lažjo analizo in prikaz
+    if visina_levo_px > sirina_zgoraj_px:
         slika_izrez = cv2.rotate(slika_izrez, cv2.ROTATE_90_CLOCKWISE)
         
     um_na_piko = 1000 / pike_na_mm_cilj
@@ -93,14 +86,14 @@ def analiziraj_sliko(slika_rgb):
     for kontura in konture_maske:
         lupina = cv2.convexHull(kontura)
         cv2.drawContours(maska_zapolnjena, [lupina], -1, 255, -1)
-        
+            
     jedro_odpiranje = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     maska_cista = cv2.morphologyEx(maska_zapolnjena, cv2.MORPH_OPEN, jedro_odpiranje)
     
-    # --- KORAK 4: IZRAČUNI (Filtriranje < 50 um in cm2) ---
+    # --- KORAK 4: IZRAČUNI ---
     koncne_konture, _ = cv2.findContours(maska_cista, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
-    veljavne_kapljice = 0
+    stevilo_odtisov = 0
     maska_filtrirana = np.zeros_like(maska_cista)
     
     for kontura in koncne_konture:
@@ -112,14 +105,13 @@ def analiziraj_sliko(slika_rgb):
             
             # POGOJ 50 um: shranimo le dovolj velike kapljice
             if premer_um >= 50:
-                veljavne_kapljice += 1
+                stevilo_odtisov += 1
                 cv2.drawContours(maska_filtrirana, [kontura], -1, 255, -1)
                 
-    # Izračunamo fizično površino obrezanega lističa v cm2
-    dejanska_sirina_mm = (slika_izrez.shape[1] / pike_na_mm_cilj)
-    dejanska_visina_mm = (slika_izrez.shape[0] / pike_na_mm_cilj)
-    povrsina_listica_cm2 = (dejanska_sirina_mm / 10) * (dejanska_visina_mm / 10)
+    # Izračun % pokritosti na podlagi pikslov filtrirane maske in celotnega obrezanega lističa
+    skupno_pikslov_listica = slika_izrez.shape[0] * slika_izrez.shape[1]
+    piksli_kapljic = cv2.countNonZero(maska_filtrirana)
     
-    pokritost_na_cm2 = veljavne_kapljice / povrsina_listica_cm2 if povrsina_listica_cm2 > 0 else 0
+    pokritost_odstotek = (piksli_kapljic / skupno_pikslov_listica) * 100 if skupno_pikslov_listica > 0 else 0
     
-    return "USPEH", slika_izrez, maska_filtrirana, veljavne_kapljice, pokritost_na_cm2
+    return "USPEH", slika_izrez, maska_filtrirana, stevilo_odtisov, pokritost_odstotek
