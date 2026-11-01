@@ -4,90 +4,81 @@ import numpy as np
 def analiziraj_sliko(slika_rgb):
     """Funkcija za obdelavo in analizo vodoobčutljivega lističa"""
     
-    # Pretvorba v HSV (Hue, Saturation, Value) prostor
-    hsv = cv2.cvtColor(slika_rgb, cv2.COLOR_RGB2HSV)
-    maska_rumene = cv2.inRange(hsv, np.array([10, 50, 50]), np.array([50, 255, 255]))
-    
-    # Zapolnimo luknje v maski lističa
-    maska_rumene = cv2.morphologyEx(maska_rumene, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15)))
+    # --- KORAK 1: AVTOMATSKI IZREZ ---
+    hsv_orig = cv2.cvtColor(slika_rgb, cv2.COLOR_RGB2HSV)
+    spodnja_rumena = np.array([15, 80, 80])
+    zgornja_rumena = np.array([45, 255, 255])
+    maska_rumene = cv2.inRange(hsv_orig, spodnja_rumena, zgornja_rumena)
     
     konture, _ = cv2.findContours(maska_rumene, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not konture:
         return "NAPAKA", "Napaka: Na sliki ni rumenega lističa.", None, None, None
         
-    najvecja = max(konture, key=cv2.contourArea)
+    najvecja_kontura = max(konture, key=cv2.contourArea)
     
-    # --- KORAK 1: FIZIČNA ROTACIJA SLIKE (Brez kakršnihkoli preslikav ali deformacij) ---
-    rect = cv2.minAreaRect(najvecja)
+    # UPORABA minAreaRect ZA NEPRAVILNE OBLIKE
+    # Obdaja tudi natrgane in nepravilne robove v optimalen pravokotnik
+    rect = cv2.minAreaRect(najvecja_kontura)
     box = cv2.boxPoints(rect)
+    tocke = np.intp(box)
     
-    # Izračunamo točen kot daljše stranice lističa
-    d1 = np.linalg.norm(box[0] - box[1])
-    d2 = np.linalg.norm(box[1] - box[2])
+    # Razvrščanje točk (zgoraj-levo, zgoraj-desno, spodaj-desno, spodaj-levo)
+    urejene_tocke = np.zeros((4, 2), dtype="float32")
+    vsota = tocke.sum(axis=1)
+    urejene_tocke[0] = tocke[np.argmin(vsota)]
+    urejene_tocke[2] = tocke[np.argmax(vsota)]
+    razlika = np.diff(tocke, axis=1)
+    urejene_tocke[1] = tocke[np.argmin(razlika)]
+    urejene_tocke[3] = tocke[np.argmax(razlika)]
     
-    if d1 > d2:
-        dy = box[1][1] - box[0][1]
-        dx = box[1][0] - box[0][0]
-    else:
-        dy = box[2][1] - box[1][1]
-        dx = box[2][0] - box[1][0]
-        
-    kot_rotacije = np.degrees(np.arctan2(dy, dx))
-    (cx, cy) = rect[0]
+    sirina_zgoraj_px = np.linalg.norm(urejene_tocke[0] - urejene_tocke[1])
+    visina_levo_px = np.linalg.norm(urejene_tocke[0] - urejene_tocke[3])
     
-    # Zavrtimo celotno originalno sliko okoli njenega centra, da se listič zravna v vodoraven položaj
-    h_orig, w_orig = slika_rgb.shape[:2]
-    matrika_rotacije = cv2.getRotationMatrix2D((cx, cy), kot_rotacije, 1.0)
-    
-    slika_zravnana = cv2.warpAffine(slika_rgb, matrika_rotacije, (w_orig, h_orig), flags=cv2.INTER_CUBIC, borderValue=(255, 255, 255))
-    
-    # Narišemo masko točne oblike lističa in jo prav tako zavrtimo
-    maska_celotna = np.zeros((h_orig, w_orig), dtype=np.uint8)
-    cv2.drawContours(maska_celotna, [najvecja], -1, 255, -1)
-    maska_zravnana = cv2.warpAffine(maska_celotna, matrika_rotacije, (w_orig, h_orig), flags=cv2.INTER_NEAREST)
-    
-    # --- KORAK 2: ŠKARJAST IZREZ (Bounding Box) ---
-    # Ko je slika zravnana, vzamemo samo naravni obdajajoči pravokotnik
-    x, y, w, h = cv2.boundingRect(maska_zravnana)
-    
-    slika_izrez = slika_zravnana[y:y+h, x:x+w].copy()
-    maska_izrez = maska_zravnana[y:y+h, x:x+w].copy()
-    
-    # Vse, kar na sliki ni listič (ozadje izven konture), pobarvamo belo, da ne moti iskanja kapljic
-    slika_izrez[maska_izrez == 0] = (255, 255, 255)
-    
-    # --- KORAK 3: SKALIRANJE NA 76 mm ---
-    # Zaradi rotacije zgoraj je listič sedaj vedno ležeč (širina w je daljša stranica, torej 76 mm)
+    # Referenca je fiksna le za daljšo stranico = 76 mm
     pike_na_mm_cilj = 60.0
-    ciljna_sirina = int(76.0 * pike_na_mm_cilj)
-    razmerje = ciljna_sirina / w
-    ciljna_visina = int(h * razmerje)
     
-    slika_koncna = cv2.resize(slika_izrez, (ciljna_sirina, ciljna_visina), interpolation=cv2.INTER_CUBIC)
-    maska_koncna = cv2.resize(maska_izrez, (ciljna_sirina, ciljna_visina), interpolation=cv2.INTER_NEAREST)
+    if visina_levo_px > sirina_zgoraj_px:
+        visina_nova = int(76.0 * pike_na_mm_cilj)
+        sirina_nova = int((sirina_zgoraj_px / visina_levo_px) * visina_nova)
+    else:
+        sirina_nova = int(76.0 * pike_na_mm_cilj)
+        visina_nova = int((visina_levo_px / sirina_zgoraj_px) * sirina_nova)
+        
+    ciljne_tocke = np.float32([
+        [0, 0],
+        [sirina_nova - 1, 0],
+        [sirina_nova - 1, visina_nova - 1],
+        [0, visina_nova - 1]
+    ])
     
+    matrika = cv2.getPerspectiveTransform(urejene_tocke, ciljne_tocke)
+    slika_izrez = cv2.warpPerspective(slika_rgb, matrika, (sirina_nova, visina_nova))
+    slika_izrez = slika_izrez[3:-3, 3:-3] # Odstranimo robove zaradi artefaktov transformacije
+    
+    # Vedno ležeča postavitev za lažjo analizo in prikaz
+    if visina_levo_px > sirina_zgoraj_px:
+        slika_izrez = cv2.rotate(slika_izrez, cv2.ROTATE_90_CLOCKWISE)
+        
     um_na_piko = 1000 / pike_na_mm_cilj
     um2_na_piko = um_na_piko ** 2
     
-    # --- KORAK 4: DETEKCIJA KAPLJIC ---
-    siva = cv2.cvtColor(slika_koncna, cv2.COLOR_RGB2GRAY)
+    # --- KORAK 2: DETEKCIJA KAPLJIC ---
+    siva = cv2.cvtColor(slika_izrez, cv2.COLOR_RGB2GRAY)
     maska_kontrasta = cv2.adaptiveThreshold(
         siva, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
         cv2.THRESH_BINARY_INV, 21, 7
     )
     maska_temnih = cv2.bitwise_and(maska_kontrasta, cv2.bitwise_not(cv2.inRange(siva, 175, 255)))
     
-    hsv_koncna = cv2.cvtColor(slika_koncna, cv2.COLOR_RGB2HSV)
+    hsv_izrez = cv2.cvtColor(slika_izrez, cv2.COLOR_RGB2HSV)
     spodnja_modra = np.array([75, 12, 12])
     zgornja_modra = np.array([165, 255, 255])
-    maska_hsv = cv2.inRange(hsv_koncna, spodnja_modra, zgornja_modra)
+    maska_hsv = cv2.inRange(hsv_izrez, spodnja_modra, zgornja_modra)
     
     maska_kapljic = cv2.bitwise_or(maska_temnih, maska_hsv)
     
-    # Omejimo iskanje kapljic strogo na točno konturo rumenega lističa
-    maska_kapljic = cv2.bitwise_and(maska_kapljic, maska_koncna)
-    
-    jedro_zapiranje = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    # --- KORAK 3: ČIŠČENJE IN KONVEKSNA LUPINA ---
+    jedro_zapiranje = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
     maska_sklenjena = cv2.morphologyEx(maska_kapljic, cv2.MORPH_CLOSE, jedro_zapiranje)
     
     konture_maske, _ = cv2.findContours(maska_sklenjena, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -95,11 +86,11 @@ def analiziraj_sliko(slika_rgb):
     for kontura in konture_maske:
         lupina = cv2.convexHull(kontura)
         cv2.drawContours(maska_zapolnjena, [lupina], -1, 255, -1)
-        
+            
     jedro_odpiranje = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     maska_cista = cv2.morphologyEx(maska_zapolnjena, cv2.MORPH_OPEN, jedro_odpiranje)
     
-    # --- KORAK 5: IZRAČUNI ---
+    # --- KORAK 4: IZRAČUNI ---
     koncne_konture, _ = cv2.findContours(maska_cista, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
     stevilo_odtisov = 0
@@ -111,14 +102,16 @@ def analiziraj_sliko(slika_rgb):
         
         if povrsina_um2 > 0:
             premer_um = 2 * np.sqrt(povrsina_um2 / np.pi)
+            
+            # POGOJ 50 um: shranimo le dovolj velike kapljice
             if premer_um >= 50:
                 stevilo_odtisov += 1
                 cv2.drawContours(maska_filtrirana, [kontura], -1, 255, -1)
                 
-    # Odstotek = piksli kapljic / piksli SAMO rumenega lističa (brez ozadja) * 100
-    piksli_papirja = cv2.countNonZero(maska_koncna)
+    # Izračun % pokritosti na podlagi pikslov filtrirane maske in celotnega obrezanega lističa
+    skupno_pikslov_listica = slika_izrez.shape[0] * slika_izrez.shape[1]
     piksli_kapljic = cv2.countNonZero(maska_filtrirana)
     
-    pokritost_odstotek = (piksli_kapljic / piksli_papirja) * 100 if piksli_papirja > 0 else 0
+    pokritost_odstotek = (piksli_kapljic / skupno_pikslov_listica) * 100 if skupno_pikslov_listica > 0 else 0
     
-    return "USPEH", slika_koncna, maska_filtrirana, stevilo_odtisov, pokritost_odstotek
+    return "USPEH", slika_izrez, maska_filtrirana, stevilo_odtisov, pokritost_odstotek
