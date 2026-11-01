@@ -56,35 +56,34 @@ def analiziraj_sliko(slika_rgb):
     um_na_piko = 1000 / pike_na_mm_cilj
     um2_na_piko = um_na_piko ** 2
     
-    # --- KORAK 2: DETEKCIJA KAPLJIC ---
+    # --- KORAK 2: DETEKCIJA KAPLJIC (POVEČANA OBČUTLJIVOST) ---
     siva = cv2.cvtColor(slika_skalirana, cv2.COLOR_RGB2GRAY)
     
-    # Povečanje lokalnega kontrasta (CLAHE) za izpostavitev bledih kapljic
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    # 1. Močnejši CLAHE (clipLimit povečan z 2.0 na 3.0) za izpostavitev bledih odtisov
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
     siva_clahe = clahe.apply(siva)
     
-    # Natančnejši adaptivni prag (manjši blok, manjša C konstanta za večjo občutljivost)
+    # 2. Bolj agresiven prag (C zmanjšan s 4 na 2, da zajame več detajlov)
     maska_kontrasta = cv2.adaptiveThreshold(
         siva_clahe, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY_INV, 15, 4
+        cv2.THRESH_BINARY_INV, 15, 2
     )
     
-    # Ohranjanje le tistih pik, ki so dejansko temnejše (filtracija šuma na svetlih delih)
     maska_temnih = cv2.bitwise_and(maska_kontrasta, cv2.bitwise_not(cv2.inRange(siva_clahe, 185, 255)))
     
+    # 3. Razširjen modri spekter (nasičenost znižana na 15 za zelo sprane kapljice)
     hsv_izrez = cv2.cvtColor(slika_skalirana, cv2.COLOR_RGB2HSV)
-    # Sužena HSV definicija specifično za modre/vijolične WSP odtise
-    spodnja_modra = np.array([85, 30, 30])
+    spodnja_modra = np.array([80, 15, 30])
     zgornja_modra = np.array([170, 255, 255])
     maska_hsv = cv2.inRange(hsv_izrez, spodnja_modra, zgornja_modra)
     
     maska_kapljic = cv2.bitwise_or(maska_temnih, maska_hsv)
     
-    # KLJUČNO: Omejimo detekcijo strogo samo na rumeni del (masko konture lističa), da ne štejemo mize v kotih!
-    maska_kapljic = cv2.bitwise_and(maska_kapljic, maska_skalirana)
+    # 4. Zaščitni rob (masko lističa skrčimo za 1 piksel okoli robu, da ne štejemo artefaktov izreza)
+    maska_za_iskanje = cv2.erode(maska_skalirana, np.ones((3, 3), np.uint8))
+    maska_kapljic = cv2.bitwise_and(maska_kapljic, maska_za_iskanje)
     
-    # --- KORAK 3: ČIŠČENJE ---
-    # Uporaba manjšega jedra (3x3 namesto 5x5), da se ohranijo drobne kapljice
+    # --- KORAK 3: ČIŠČENJE IN KONVEKSNA LUPINA ---
     jedro_zapiranje = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     maska_sklenjena = cv2.morphologyEx(maska_kapljic, cv2.MORPH_CLOSE, jedro_zapiranje)
     
@@ -94,8 +93,8 @@ def analiziraj_sliko(slika_rgb):
         lupina = cv2.convexHull(kontura)
         cv2.drawContours(maska_zapolnjena, [lupina], -1, 255, -1)
         
-    jedro_odpiranje = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    maska_cista = cv2.morphologyEx(maska_zapolnjena, cv2.MORPH_OPEN, jedro_odpiranje)
+    # ODSTRANJENO MORPH_OPEN, da se namerno ohranijo originalne drobne kapljice pri ~50 µm
+    maska_cista = maska_zapolnjena 
     
     # --- KORAK 4: NOVI IZRAČUNI ---
     koncne_konture, _ = cv2.findContours(maska_cista, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -115,8 +114,8 @@ def analiziraj_sliko(slika_rgb):
                 stevilo_odtisov += 1
                 cv2.drawContours(maska_filtrirana, [kontura], -1, 255, -1)
                 
-    # Natančen izračun pokritosti: piksli kapljic / piksli DEJANSKEGA lističa (brez ozadja) * 100
-    piksli_papirja = cv2.countNonZero(maska_skalirana)
+    # Natančen izračun pokritosti: piksli kapljic / piksli DEJANSKEGA lističa (brez ozadja in robu) * 100
+    piksli_papirja = cv2.countNonZero(maska_za_iskanje)
     piksli_kapljic = cv2.countNonZero(maska_filtrirana)
     
     pokritost_odstotek = (piksli_kapljic / piksli_papirja) * 100 if piksli_papirja > 0 else 0
