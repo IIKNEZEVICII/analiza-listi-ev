@@ -2,17 +2,10 @@ import streamlit as st
 import cv2
 import numpy as np
 from PIL import Image
-
-# Uvozimo našo logiko iz prve datoteke
 from obdelava import analiziraj_sliko
 
-# --- 1. MODERNIZIRANE NASTAVITVE IN SEJNO STANJE ---
-st.set_page_config(
-    page_title="Analiza škropljenja",
-    layout="centered"
-)
+st.set_page_config(page_title="Analiza škropljenja", layout="centered")
 
-# Inicializacija sejnega stanja (Session State) za shranjevanje rezultatov več lističev
 if 'zgodovina' not in st.session_state:
     st.session_state.zgodovina = []
     st.session_state.stevec = 1
@@ -22,7 +15,6 @@ st.markdown("""
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}
 header {visibility: hidden;}
-
 .metric-card {
     background-color: rgba(128,128,128,0.05);
     border: 1px solid rgba(128,128,128,0.15);
@@ -38,17 +30,14 @@ header {visibility: hidden;}
 def procesiraj_sliko(slika_array):
     return analiziraj_sliko(slika_array)
 
-# Funkcija za pripravo datoteke za izvoz (Prilagojeno za nove rezultate)
 def ustvari_csv(podatki):
     glava = "Vzorec,Stevilo_odtisov,Pokritost_odstotek\n"
     vrstice = [f"{p['Vzorec']},{p['Število odtisov']},{p['Pokritost (%)']}" for p in podatki]
     return (glava + "\n".join(vrstice)).encode('utf-8')
 
-# --- 2. UPORABNIŠKI VMESNIK ---
 st.markdown("### 🌾 Analiza škropljenja")
 st.caption("Aplikacija za hiter pregled kakovosti škropljenja.")
 
-# Uporabimo samo klasičen uploader
 nalozena_slika = st.file_uploader(
     "Naložite sliko ali odprite kamero", 
     type=['jpg', 'jpeg', 'png'], 
@@ -72,7 +61,6 @@ if nalozena_slika is not None:
         with col2:
             st.metric("Pokritost", f"{pokritost:.2f} %")
             
-        # Gumb za dodajanje lističa v zgodovino
         if st.button("💾 Shrani ta rezultat v tabelo"):
             st.session_state.zgodovina.append({
                 "Vzorec": f"Listič {st.session_state.stevec}",
@@ -94,13 +82,10 @@ if nalozena_slika is not None:
         prikazna_slika = cv2.addWeighted(izrez, 1.0 - prosojnost, maska_rgb, prosojnost, 0)
         st.image(prikazna_slika, use_container_width=True, channels="RGB")
         
-# --- 3. PRIKAZ TABELE IN IZVOZ PODATKOV ---
 if st.session_state.zgodovina:
     st.markdown("---")
     st.markdown("#### 📋 Shranjeni rezultati (Tabela)")
-    
     st.dataframe(st.session_state.zgodovina, use_container_width=True)
-    
     csv_podatki = ustvari_csv(st.session_state.zgodovina)
     st.download_button(
         label="⬇️ Prenesi rezultate (.csv)",
