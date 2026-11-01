@@ -66,4 +66,59 @@ def analiziraj_sliko(slika_rgb):
     slika_koncna = cv2.resize(slika_izrez, (ciljna_sirina, ciljna_visina), interpolation=cv2.INTER_CUBIC)
     maska_koncna = cv2.resize(maska_izrez, (ciljna_sirina, ciljna_visina), interpolation=cv2.INTER_NEAREST)
     
-    um_na_piko = 1000 /
+    um_na_piko = 1000 / pike_na_mm_cilj
+    um2_na_piko = um_na_piko ** 2
+    
+    # --- KORAK 4: DETEKCIJA KAPLJIC ---
+    siva = cv2.cvtColor(slika_koncna, cv2.COLOR_RGB2GRAY)
+    maska_kontrasta = cv2.adaptiveThreshold(
+        siva, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY_INV, 21, 7
+    )
+    maska_temnih = cv2.bitwise_and(maska_kontrasta, cv2.bitwise_not(cv2.inRange(siva, 175, 255)))
+    
+    hsv_koncna = cv2.cvtColor(slika_koncna, cv2.COLOR_RGB2HSV)
+    spodnja_modra = np.array([75, 12, 12])
+    zgornja_modra = np.array([165, 255, 255])
+    maska_hsv = cv2.inRange(hsv_koncna, spodnja_modra, zgornja_modra)
+    
+    maska_kapljic = cv2.bitwise_or(maska_temnih, maska_hsv)
+    
+    # Omejimo iskanje kapljic strogo na točno konturo rumenega lističa
+    maska_kapljic = cv2.bitwise_and(maska_kapljic, maska_koncna)
+    
+    jedro_zapiranje = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    maska_sklenjena = cv2.morphologyEx(maska_kapljic, cv2.MORPH_CLOSE, jedro_zapiranje)
+    
+    konture_maske, _ = cv2.findContours(maska_sklenjena, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    maska_zapolnjena = np.zeros_like(maska_sklenjena)
+    for kontura in konture_maske:
+        lupina = cv2.convexHull(kontura)
+        cv2.drawContours(maska_zapolnjena, [lupina], -1, 255, -1)
+        
+    jedro_odpiranje = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    maska_cista = cv2.morphologyEx(maska_zapolnjena, cv2.MORPH_OPEN, jedro_odpiranje)
+    
+    # --- KORAK 5: IZRAČUNI ---
+    koncne_konture, _ = cv2.findContours(maska_cista, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    stevilo_odtisov = 0
+    maska_filtrirana = np.zeros_like(maska_cista)
+    
+    for kontura in koncne_konture:
+        povrsina_px = cv2.contourArea(kontura)
+        povrsina_um2 = povrsina_px * um2_na_piko
+        
+        if povrsina_um2 > 0:
+            premer_um = 2 * np.sqrt(povrsina_um2 / np.pi)
+            if premer_um >= 50:
+                stevilo_odtisov += 1
+                cv2.drawContours(maska_filtrirana, [kontura], -1, 255, -1)
+                
+    # Odstotek = piksli kapljic / piksli SAMO rumenega lističa (brez ozadja) * 100
+    piksli_papirja = cv2.countNonZero(maska_koncna)
+    piksli_kapljic = cv2.countNonZero(maska_filtrirana)
+    
+    pokritost_odstotek = (piksli_kapljic / piksli_papirja) * 100 if piksli_papirja > 0 else 0
+    
+    return "USPEH", slika_koncna, maska_filtrirana, stevilo_odtisov, pokritost_odstotek
