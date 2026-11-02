@@ -3,7 +3,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-# Uvozimo logiko
+# Uvozimo našo logiko iz datoteke obdelava.py
 from obdelava import analiziraj_sliko
 
 st.set_page_config(
@@ -32,8 +32,9 @@ header {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
 
+# Sprememba imena v _v2 prepreči, da bi Streamlit uporabil star cache v oblaku
 @st.cache_data
-def procesiraj_sliko(slika_array):
+def procesiraj_sliko_v2(slika_array):
     return analiziraj_sliko(slika_array)
 
 def ustvari_csv(podatki):
@@ -52,18 +53,18 @@ nalozena_slika = st.file_uploader(
 
 if nalozena_slika is not None:
     image = Image.open(nalozena_slika)
-    slika_rgb = np.array(image)
+    slika_rgb = np.array(image) # RGB (Red, Green, Blue) slikovni format
     
-    with st.spinner("Analiziram listič in izrezujem 1x1 cm vzorce..."):
-        status, slika_oznake, rezultati_kvadratkov = procesiraj_sliko(slika_rgb)
+    with st.spinner("Analiziram listič in izrezujem vzorce (ignoriram < 50 µm)..."):
+        # Uporabimo novo ime funkcije
+        status, slika_oznake, rezultati_kvadratkov = procesiraj_sliko_v2(slika_rgb)
         
     if status == "NAPAKA":
-        st.error(slika_oznake) # Vrne string napake
+        st.error(slika_oznake) 
     else:
         st.markdown("#### Detektiran listič z označenimi vzorci")
         st.image(slika_oznake, use_container_width=True, channels="RGB")
         
-        # Izračun povprečij
         povp_kapljic = sum(k['st_kapljic'] for k in rezultati_kvadratkov) / 3
         povp_pokritost = sum(k['pokritost'] for k in rezultati_kvadratkov) / 3
         
@@ -91,13 +92,11 @@ if nalozena_slika is not None:
             min_value=0.0, max_value=1.0, value=0.4, step=0.1
         )
         
-        # Prikaz treh kvadratkov drug ob drugem
         stolpci = st.columns(3)
         for i, (stolpec, kvadrat) in enumerate(zip(stolpci, rezultati_kvadratkov)):
             with stolpec:
                 st.write(f"**Vzorec {i+1}**")
                 
-                # Združevanje RGB in maske za prikaz
                 maska_rgb = cv2.cvtColor(kvadrat['maska'], cv2.COLOR_GRAY2RGB)
                 prikaz = cv2.addWeighted(kvadrat['rgb'], 1.0 - prosojnost, maska_rgb, prosojnost, 0)
                 
