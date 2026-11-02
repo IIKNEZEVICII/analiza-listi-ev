@@ -30,9 +30,9 @@ header {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
 
-# Cache preimenovan na _v6 za naložitev nove matematike z globalno analizo in ravnanjem!
+# SPREMEMBA v _v7 garantira, da strežnik uporabi najnovejšo brezšumno logiko!
 @st.cache_data
-def procesiraj_sliko_v6(slika_array):
+def procesiraj_sliko_v7(slika_array):
     return analiziraj_sliko(slika_array)
 
 def ustvari_csv(podatki):
@@ -53,8 +53,8 @@ if nalozena_slika is not None:
     image = Image.open(nalozena_slika)
     slika_rgb = np.array(image)
     
-    with st.spinner("Matematično ravnam listič, ignoriram odtise < 50µm in preverjam globalno področje..."):
-        status, slika_oznake, rezultati_kvadratkov, globalni_rezultati = procesiraj_sliko_v6(slika_rgb)
+    with st.spinner("Matematično ravnam listič in izvajam brezšumno detekcijo..."):
+        status, slika_oznake, rezultati_kvadratkov, globalni_rezultati = procesiraj_sliko_v7(slika_rgb)
         
     if status == "NAPAKA":
         st.error(slika_oznake) 
@@ -62,7 +62,6 @@ if nalozena_slika is not None:
         st.markdown("#### Detektiran in poravnan listič")
         st.image(slika_oznake, use_container_width=True, channels="RGB")
         
-        # 1. Prikaz GLOBALNE analize
         st.markdown("#### 🌍 Globalna analiza (Celoten listič)")
         col_g1, col_g2 = st.columns(2)
         with col_g1:
@@ -72,7 +71,6 @@ if nalozena_slika is not None:
 
         st.markdown("---")
         
-        # 2. Prikaz analize izrezov
         povp_kapljic = sum(k['st_kapljic'] for k in rezultati_kvadratkov) / 3
         povp_pokritost = sum(k['pokritost'] for k in rezultati_kvadratkov) / 3
         
