@@ -2,25 +2,10 @@ import cv2
 import numpy as np
 import random
 
-def uredi_tocke(tocke):
-    """Razvrsti 4 točke v vrstni red: zgoraj-levo, zgoraj-desno, spodaj-desno, spodaj-levo"""
-    tocke = tocke.reshape((4, 2))
-    nove_tocke = np.zeros((4, 2), dtype=np.float32)
-    
-    vsota = tocke.sum(axis=1)
-    nove_tocke[0] = tocke[np.argmin(vsota)] # Zgoraj levo
-    nove_tocke[2] = tocke[np.argmax(vsota)] # Spodaj desno
-    
-    razlika = np.diff(tocke, axis=1)
-    nove_tocke[1] = tocke[np.argmin(razlika)] # Zgoraj desno
-    nove_tocke[3] = tocke[np.argmax(razlika)] # Spodaj levo
-    
-    return nove_tocke
-
 def analiziraj_sliko(slika_rgb):
-    """Brezšumna različica: enojna preslikava brez artefaktov in izboljšano glajenje teksture."""
+    """Vrnitev na originalno in natančno detekcijo, a brez združevanja kapljic + odebeljene vizualije."""
     
-    # --- KORAK 1: DETEKCIJA LISTIČA ---
+    # --- KORAK 1: NARAVEN IZREZ IN SKALIRANJE ---
     hsv_orig = cv2.cvtColor(slika_rgb, cv2.COLOR_RGB2HSV)
     spodnja_rumena = np.array([15, 80, 80])
     zgornja_rumena = np.array([45, 255, 255])
@@ -32,72 +17,49 @@ def analiziraj_sliko(slika_rgb):
     
     konture, _ = cv2.findContours(maska_rumene, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not konture:
-        return "NAPAKA", "Napaka: Na sliki ni rumenega lističa.", None, None
+        return "NAPAKA", "Napaka: Na sliki ni rumenega lističa.", None
         
     najvecja_kontura = max(konture, key=cv2.contourArea)
     maska_papirja_celotna = np.zeros(slika_rgb.shape[:2], dtype=np.uint8)
     cv2.drawContours(maska_papirja_celotna, [najvecja_kontura], -1, 255, -1)
     
-    # --- KORAK 2: DIREKTNO RAVNANJE IN SKALIRANJE ---
-    pravokotnik = cv2.minAreaRect(najvecja_kontura)
-    tocke_pravokotnika = cv2.boxPoints(pravokotnik)
-    tocke_pravokotnika = np.int32(tocke_pravokotnika)
+    x, y, w, h = cv2.boundingRect(najvecja_kontura)
+    slika_izrez = slika_rgb[y:y+h, x:x+w].copy()
+    maska_izrez = maska_papirja_celotna[y:y+h, x:x+w].copy()
     
-    urejene_tocke = uredi_tocke(tocke_pravokotnika)
-    (tl, tr, br, bl) = urejene_tocke
-    
-    sirina_px_orig = max(int(np.sqrt(((br[0] - bl[0]) ** 2) + ((br[1] - bl[1]) ** 2))), 
-                         int(np.sqrt(((tr[0] - tl[0]) ** 2) + ((tr[1] - tl[1]) ** 2))))
-    visina_px_orig = max(int(np.sqrt(((tr[0] - br[0]) ** 2) + ((tr[1] - br[1]) ** 2))), 
-                         int(np.sqrt(((tl[0] - bl[0]) ** 2) + ((tl[1] - bl[1]) ** 2))))
-                         
     pike_na_mm_cilj = 60.0
     daljsa_stranica_mm = 76.0
-    ciljna_dolzina_px = int(daljsa_stranica_mm * pike_na_mm_cilj)
     
-    if visina_px_orig > sirina_px_orig:
-        ciljna_visina_px = ciljna_dolzina_px
-        razmerje = sirina_px_orig / visina_px_orig if visina_px_orig > 0 else 1
-        ciljna_sirina_px = int(ciljna_visina_px * razmerje)
+    if h > w:
+        ciljna_visina_px = int(daljsa_stranica_mm * pike_na_mm_cilj)
+        razmerje = ciljna_visina_px / h
+        ciljna_sirina_px = int(w * razmerje)
     else:
-        ciljna_sirina_px = ciljna_dolzina_px
-        razmerje = visina_px_orig / sirina_px_orig if sirina_px_orig > 0 else 1
-        ciljna_visina_px = int(ciljna_sirina_px * razmerje)
+        ciljna_sirina_px = int(daljsa_stranica_mm * pike_na_mm_cilj)
+        razmerje = ciljna_sirina_px / w
+        ciljna_visina_px = int(h * razmerje)
         
-    ciljne_tocke = np.array([
-        [0, 0],
-        [ciljna_sirina_px - 1, 0],
-        [ciljna_sirina_px - 1, ciljna_visina_px - 1],
-        [0, ciljna_visina_px - 1]
-    ], dtype="float32")
+    slika_skalirana = cv2.resize(slika_izrez, (ciljna_sirina_px, ciljna_visina_px), interpolation=cv2.INTER_CUBIC)
+    maska_skalirana = cv2.resize(maska_izrez, (ciljna_sirina_px, ciljna_visina_px), interpolation=cv2.INTER_NEAREST)
     
-    matrika_preslikave = cv2.getPerspectiveTransform(urejene_tocke, ciljne_tocke)
-    slika_skalirana = cv2.warpPerspective(slika_rgb, matrika_preslikave, (ciljna_sirina_px, ciljna_visina_px), flags=cv2.INTER_LINEAR)
-    maska_skalirana = cv2.warpPerspective(maska_papirja_celotna, matrika_preslikave, (ciljna_sirina_px, ciljna_visina_px), flags=cv2.INTER_NEAREST)
-    _, maska_skalirana = cv2.threshold(maska_skalirana, 127, 255, cv2.THRESH_BINARY)
-    
-    if ciljna_visina_px > ciljna_sirina_px:
-        slika_skalirana = cv2.rotate(slika_skalirana, cv2.ROTATE_90_CLOCKWISE)
-        maska_skalirana = cv2.rotate(maska_skalirana, cv2.ROTATE_90_CLOCKWISE)
-        temp = ciljna_sirina_px
-        ciljna_sirina_px = ciljna_visina_px
-        ciljna_visina_px = temp
-        
     um_na_piko = 1000 / pike_na_mm_cilj
     um2_na_piko = um_na_piko ** 2
     
-    # --- KORAK 3: DETEKCIJA S ČIŠČENJEM TEKSTURE PAPIRJA ---
+    # --- KORAK 2: ORIGINALNA ZANESLJIVA DETEKCIJA KAPLJIC ---
     siva = cv2.cvtColor(slika_skalirana, cv2.COLOR_RGB2GRAY)
     
-    siva_zglad = cv2.medianBlur(siva, 5) 
+    # Zelo rahel filter (3x3), ki zgladi zrnato teksturo rumenega papirja, pravih kapljic pa ne poškoduje
+    siva_zglad = cv2.medianBlur(siva, 3) 
     
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     siva_clahe = clahe.apply(siva_zglad)
     
+    # Vrnjeno na tvoj natančnejši adaptivni prag iz originalne kode
     maska_kontrasta = cv2.adaptiveThreshold(
         siva_clahe, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY_INV, 15, 5 
+        cv2.THRESH_BINARY_INV, 15, 4
     )
+    
     maska_temnih = cv2.bitwise_and(maska_kontrasta, cv2.bitwise_not(cv2.inRange(siva_clahe, 185, 255)))
     
     hsv_izrez = cv2.cvtColor(slika_skalirana, cv2.COLOR_RGB2HSV)
@@ -108,9 +70,11 @@ def analiziraj_sliko(slika_rgb):
     maska_kapljic = cv2.bitwise_or(maska_temnih, maska_hsv)
     maska_kapljic = cv2.bitwise_and(maska_kapljic, maska_skalirana)
     
+    # --- KORAK 3: ČIŠČENJE BREZ ZDRUŽEVANJA KAPLJIC ---
     jedro_zapiranje = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     maska_sklenjena = cv2.morphologyEx(maska_kapljic, cv2.MORPH_CLOSE, jedro_zapiranje)
     
+    # Tukaj smo odstranili "Convex Hull". Uporabimo samo topološko zapolnjevanje (RETR_CCOMP), da ohranimo ločene kapljice.
     konture_maske, hierarhija = cv2.findContours(maska_sklenjena, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
     maska_zapolnjena = maska_sklenjena.copy()
     if hierarhija is not None:
@@ -121,11 +85,9 @@ def analiziraj_sliko(slika_rgb):
     jedro_odpiranje = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     maska_cista = cv2.morphologyEx(maska_zapolnjena, cv2.MORPH_OPEN, jedro_odpiranje)
     
-    # --- KORAK 4: GLOBALNA ANALIZA IN FILTRACIJA (>50µm) ---
     koncne_konture, _ = cv2.findContours(maska_cista, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     maska_filtrirana = np.zeros_like(maska_cista)
     
-    st_kapljic_global = 0
     for kontura in koncne_konture:
         povrsina_px = cv2.contourArea(kontura)
         povrsina_um2 = povrsina_px * um2_na_piko
@@ -133,27 +95,17 @@ def analiziraj_sliko(slika_rgb):
             premer_um = 2 * np.sqrt(povrsina_um2 / np.pi)
             if premer_um >= 50:
                 cv2.drawContours(maska_filtrirana, [kontura], -1, 255, -1)
-                st_kapljic_global += 1
-                
-    piksli_kapljic_global = cv2.countNonZero(maska_filtrirana)
-    povrsina_papirja_global = cv2.countNonZero(maska_skalirana)
-    pokritost_global = (piksli_kapljic_global / povrsina_papirja_global) * 100 if povrsina_papirja_global > 0 else 0
-    
-    globalni_rezultati = {
-        "st_kapljic": st_kapljic_global,
-        "pokritost": pokritost_global
-    }
                 
     slika_prikaz = cv2.bitwise_and(slika_skalirana, slika_skalirana, mask=maska_skalirana)
     
-    # --- KORAK 5: IZREZ IN OŠTEVILČENJE TREH 1x1 cm KVADRATKOV ---
+    # --- KORAK 4: IZREZ TREH 1x1 cm KVADRATKOV ---
     velikost_kvadrata_px = int(10 * pike_na_mm_cilj) 
     rob_px = int(2.0 * pike_na_mm_cilj) 
     
     if ciljna_sirina_px < velikost_kvadrata_px + 2*rob_px or ciljna_visina_px < velikost_kvadrata_px + 2*rob_px:
         rob_px = 0
         if ciljna_sirina_px < velikost_kvadrata_px or ciljna_visina_px < velikost_kvadrata_px:
-            return "NAPAKA", "Listič je premajhen za izrez 1x1 cm kvadrata.", None, None
+            return "NAPAKA", "Listič je premajhen za izrez 1x1 cm kvadrata.", None
         
     rezultati_kvadratkov = []
     shranjene_koordinate = [] 
@@ -182,7 +134,10 @@ def analiziraj_sliko(slika_rgb):
         if povrsina_papirja_v_kvadratku >= (velikost_kvadrata_px * velikost_kvadrata_px * 0.99):
             shranjene_koordinate.append((x_rand, y_rand)) 
             
+            # Debelejši okvir (debelina povečana na 15)
             cv2.rectangle(slika_z_oznakami, (x_rand, y_rand), (x_rand+velikost_kvadrata_px, y_rand+velikost_kvadrata_px), (255, 0, 0), 15)
+            
+            # Povečane številke (Scale povečan na 4, debelina teksta na 10, zamik prilagojen)
             oznaka = str(najdeni + 1)
             cv2.putText(slika_z_oznakami, oznaka, (x_rand + 30, y_rand + 110), cv2.FONT_HERSHEY_SIMPLEX, 4, (255, 0, 0), 10, cv2.LINE_AA)
             
@@ -206,6 +161,6 @@ def analiziraj_sliko(slika_rgb):
         poskusi += 1
         
     if najdeni < 3:
-        return "NAPAKA", "Zaradi prekrivanja ni bilo mogoče najti 3 območij.", None, None
+        return "NAPAKA", "Na lističu zaradi preprečevanja robov in prekrivanja ni bilo mogoče najti 3 ločenih 1x1 cm območij.", None
         
-    return "USPEH", slika_z_oznakami, rezultati_kvadratkov, globalni_rezultati
+    return "USPEH", slika_z_oznakami, rezultati_kvadratkov
