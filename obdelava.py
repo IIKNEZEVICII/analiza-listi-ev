@@ -1,10 +1,11 @@
 import cv2
 import numpy as np
+import random
 
 def analiziraj_sliko(slika_rgb):
-    """Funkcija za obdelavo in analizo vodoobčutljivega lističa"""
+    """Funkcija za obdelavo vodoobčutljivega lističa in izrez 3 naključnih 1x1cm kvadratkov"""
     
-    # --- KORAK 1: PREPROST IN NARAVEN IZREZ (Tvoj "dober izrez") ---
+    # --- KORAK 1: PREPROST IN NARAVEN IZREZ ---
     hsv_orig = cv2.cvtColor(slika_rgb, cv2.COLOR_RGB2HSV)
     spodnja_rumena = np.array([15, 80, 80])
     zgornja_rumena = np.array([45, 255, 255])
@@ -16,15 +17,13 @@ def analiziraj_sliko(slika_rgb):
     
     konture, _ = cv2.findContours(maska_rumene, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not konture:
-        return "NAPAKA", "Napaka: Na sliki ni rumenega lističa.", None, None, None
+        return "NAPAKA", "Napaka: Na sliki ni rumenega lističa.", None
         
     najvecja_kontura = max(konture, key=cv2.contourArea)
-    
     maska_papirja_celotna = np.zeros(slika_rgb.shape[:2], dtype=np.uint8)
     cv2.drawContours(maska_papirja_celotna, [najvecja_kontura], -1, 255, -1)
     
     x, y, w, h = cv2.boundingRect(najvecja_kontura)
-    
     slika_izrez = slika_rgb[y:y+h, x:x+w].copy()
     maska_izrez = maska_papirja_celotna[y:y+h, x:x+w].copy()
     
@@ -35,7 +34,7 @@ def analiziraj_sliko(slika_rgb):
         w = h
         h = temp
         
-    # --- SKALIRANJE ---
+    # --- SKALIRANJE (Fiksna višina 76mm) ---
     pike_na_mm_cilj = 60.0
     visina_mm = 76.0
     ciljna_visina_px = int(visina_mm * pike_na_mm_cilj)
@@ -49,30 +48,24 @@ def analiziraj_sliko(slika_rgb):
     um_na_piko = 1000 / pike_na_mm_cilj
     um2_na_piko = um_na_piko ** 2
     
-    # --- KORAK 2: DETEKCIJA KAPLJIC ---
+    # --- KORAK 2: DETEKCIJA KAPLJIC NA CELEM LISTIČU ---
     siva = cv2.cvtColor(slika_skalirana, cv2.COLOR_RGB2GRAY)
-    
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     siva_clahe = clahe.apply(siva)
     
-    # Prilagoditev 1: C spremenjen iz 7 na 4, kar ujame tudi blede odtise
     maska_kontrasta = cv2.adaptiveThreshold(
         siva_clahe, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY_INV, 21, 4
+        cv2.THRESH_BINARY_INV, 15, 4
     )
     
     maska_temnih = cv2.bitwise_and(maska_kontrasta, cv2.bitwise_not(cv2.inRange(siva_clahe, 185, 255)))
-    
     hsv_izrez = cv2.cvtColor(slika_skalirana, cv2.COLOR_RGB2HSV)
     spodnja_modra = np.array([85, 30, 30])
     zgornja_modra = np.array([170, 255, 255])
     maska_hsv = cv2.inRange(hsv_izrez, spodnja_modra, zgornja_modra)
     
     maska_kapljic = cv2.bitwise_or(maska_temnih, maska_hsv)
-    
-    # Zaščitni rob (okvir): prepreči, da bi se senca na zunanjem robu lističa zaznala kot kapljica
-    maska_rob = cv2.erode(maska_skalirana, np.ones((3, 3), np.uint8))
-    maska_kapljic = cv2.bitwise_and(maska_kapljic, maska_rob)
+    maska_kapljic = cv2.bitwise_and(maska_kapljic, maska_skalirana)
     
     # --- KORAK 3: ČIŠČENJE ---
     jedro_zapiranje = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
@@ -84,32 +77,56 @@ def analiziraj_sliko(slika_rgb):
         lupina = cv2.convexHull(kontura)
         cv2.drawContours(maska_zapolnjena, [lupina], -1, 255, -1)
         
-    # Prilagoditev 2: Popolnoma IZBRISAN "cv2.morphologyEx(..., cv2.MORPH_OPEN)", 
-    # ki je do sedaj po nesreči brisal tiste najmanjše prave odtise.
-    maska_cista = maska_zapolnjena
+    jedro_odpiranje = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    maska_cista = cv2.morphologyEx(maska_zapolnjena, cv2.MORPH_OPEN, jedro_odpiranje)
     
-    # --- KORAK 4: IZRAČUNI ---
     koncne_konture, _ = cv2.findContours(maska_cista, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    stevilo_odtisov = 0
     maska_filtrirana = np.zeros_like(maska_cista)
     
     for kontura in koncne_konture:
         povrsina_px = cv2.contourArea(kontura)
         povrsina_um2 = povrsina_px * um2_na_piko
-        
-        # Filtiramo prah s čisto matematiko namesto z vizualnim radiranjem
         if povrsina_um2 > 0:
             premer_um = 2 * np.sqrt(povrsina_um2 / np.pi)
             if premer_um >= 50:
-                stevilo_odtisov += 1
                 cv2.drawContours(maska_filtrirana, [kontura], -1, 255, -1)
                 
-    piksli_papirja = cv2.countNonZero(maska_rob)
-    piksli_kapljic = cv2.countNonZero(maska_filtrirana)
-    
-    pokritost_odstotek = (piksli_kapljic / piksli_papirja) * 100 if piksli_papirja > 0 else 0
-    
     slika_prikaz = cv2.bitwise_and(slika_skalirana, slika_skalirana, mask=maska_skalirana)
     
-    return "USPEH", slika_prikaz, maska_filtrirana, stevilo_odtisov, pokritost_odstotek
+    # --- KORAK 4: IZREZ TREH 1cm x 1cm KVADRATKOV ---
+    velikost_kvadrata_px = int(10 * pike_na_mm_cilj) # 10 mm * 60 px/mm = 600 px
+    
+    if ciljna_sirina_px < velikost_kvadrata_px or ciljna_visina_px < velikost_kvadrata_px:
+        return "NAPAKA", "Listič je premajhen za izrez 1x1 cm kvadrata.", None
+        
+    rezultati_kvadratkov = []
+    slika_z_oznakami = slika_prikaz.copy()
+    
+    for i in range(3):
+        # Naključna x in y koordinata znotraj meja lističa
+        x_rand = random.randint(0, ciljna_sirina_px - velikost_kvadrata_px)
+        y_rand = random.randint(0, ciljna_visina_px - velikost_kvadrata_px)
+        
+        # Narišemo rdeč kvadrat na glavno sliko za prikaz uporabniku
+        cv2.rectangle(slika_z_oznakami, (x_rand, y_rand), (x_rand+velikost_kvadrata_px, y_rand+velikost_kvadrata_px), (255, 0, 0), 10)
+        
+        # Izrežemo RGB sliko in binarno masko
+        izrez_rgb = slika_prikaz[y_rand:y_rand+velikost_kvadrata_px, x_rand:x_rand+velikost_kvadrata_px]
+        izrez_maska = maska_filtrirana[y_rand:y_rand+velikost_kvadrata_px, x_rand:x_rand+velikost_kvadrata_px]
+        
+        # Preštejemo kapljice strogo znotraj tega kvadratka
+        konture_izrez, _ = cv2.findContours(izrez_maska, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        st_kapljic = len(konture_izrez)
+        
+        # Izračunamo pokritost (%) za ta 1x1cm kvadrat
+        piksli_kapljic = cv2.countNonZero(izrez_maska)
+        pokritost_odstotek = (piksli_kapljic / (velikost_kvadrata_px ** 2)) * 100
+        
+        rezultati_kvadratkov.append({
+            "rgb": izrez_rgb,
+            "maska": izrez_maska,
+            "st_kapljic": st_kapljic,
+            "pokritost": pokritost_odstotek
+        })
+        
+    return "USPEH", slika_z_oznakami, rezultati_kvadratkov
