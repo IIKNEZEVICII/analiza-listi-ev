@@ -3,6 +3,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
+# Uvozimo logiko (pazi, da se datoteka imenuje obdelava.py oz. ustrezno popravi)
 from obdelava import analiziraj_sliko
 
 st.set_page_config(
@@ -31,9 +32,9 @@ header {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
 
-# Spremenjeno ime prisili nov cache v oblaku, da naloži novo detekcijo in debelejše okvirje!
+# Sprememba imena v _v4 ponovno počisti predpomnilnik na strežniku
 @st.cache_data
-def procesiraj_sliko_v5(slika_array):
+def procesiraj_sliko_v4(slika_array):
     return analiziraj_sliko(slika_array)
 
 def ustvari_csv(podatki):
@@ -54,8 +55,9 @@ if nalozena_slika is not None:
     image = Image.open(nalozena_slika)
     slika_rgb = np.array(image)
     
-    with st.spinner("Analiziram listič in iščem ločene 1x1 cm vzorce..."):
-        status, slika_oznake, rezultati_kvadratkov = procesiraj_sliko_v5(slika_rgb)
+    with st.spinner("Analiziram listič in iščem ločene 1x1 cm vzorce (odmik 1.5mm)..."):
+        # Kličemo svežo kodo _v4
+        status, slika_oznake, rezultati_kvadratkov = procesiraj_sliko_v4(slika_rgb)
         
     if status == "NAPAKA":
         st.error(slika_oznake) 
