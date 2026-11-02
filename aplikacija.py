@@ -3,7 +3,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-# Uvozimo logiko (pazi, da se datoteka imenuje tako kot je shranjena, npr. obdelava.py)
+# Uvozimo logiko (pazi, da si na strežnik shranil najnovejšo obdelava.py iz prejšnjega odgovora)
 from obdelava import analiziraj_sliko
 
 st.set_page_config(
@@ -32,9 +32,9 @@ header {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
 
-# SPREMEMBA IMENA FUNKCIJE v _v3 prisili brisanje strežniškega predpomnilnika
-@st.cache_data
-def procesiraj_sliko_v3(slika_array):
+# ODSTRANJEN @st.cache_data! 
+# Zdaj bo koda ob vsakem nalaganju slike zares pognala novo matematiko.
+def procesiraj_sliko(slika_array):
     return analiziraj_sliko(slika_array)
 
 def ustvari_csv(podatki):
@@ -43,7 +43,7 @@ def ustvari_csv(podatki):
     return (glava + "\n".join(vrstice)).encode('utf-8')
 
 st.markdown("### 🌾 Analiza škropljenja (3x 1cm²)")
-st.caption("Aplikacija naključno izbere tri kvadrate velikosti 1x1 cm in izračuna povprečje.")
+st.caption("Aplikacija naključno izbere tri ločene kvadrate velikosti 1x1 cm in izračuna povprečje.")
 
 nalozena_slika = st.file_uploader(
     "Naložite sliko ali odprite kamero", 
@@ -55,9 +55,8 @@ if nalozena_slika is not None:
     image = Image.open(nalozena_slika)
     slika_rgb = np.array(image)
     
-    with st.spinner("Analiziram listič in izrezujem prave 1x1 cm vzorce (ignoriram < 50 µm)..."):
-        # Kličemo novo ime funkcije
-        status, slika_oznake, rezultati_kvadratkov = procesiraj_sliko_v3(slika_rgb)
+    with st.spinner("Analiziram listič in iščem ločene 1x1 cm vzorce (odmik 1.5mm)..."):
+        status, slika_oznake, rezultati_kvadratkov = procesiraj_sliko(slika_rgb)
         
     if status == "NAPAKA":
         st.error(slika_oznake) 
@@ -85,7 +84,7 @@ if nalozena_slika is not None:
             st.success(f"Shranjeno! (Skupaj: {len(st.session_state.zgodovina)})")
 
         st.markdown("<hr>", unsafe_allow_html=True)
-        st.markdown("#### Posamezni 1x1 cm izrezi")
+        st.markdown("#### Posamezni ločeni 1x1 cm izrezi")
         
         prosojnost = st.slider(
             "Izberite raven prikaza maske na vzorcih (0 = original, 1 = maska):", 
