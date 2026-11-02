@@ -3,7 +3,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-# Uvozimo našo logiko iz datoteke obdelava.py
+# Uvozimo logiko (pazi, da se datoteka imenuje tako kot je shranjena, npr. obdelava.py)
 from obdelava import analiziraj_sliko
 
 st.set_page_config(
@@ -32,9 +32,9 @@ header {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
 
-# Sprememba imena v _v2 prepreči, da bi Streamlit uporabil star cache v oblaku
+# SPREMEMBA IMENA FUNKCIJE v _v3 prisili brisanje strežniškega predpomnilnika
 @st.cache_data
-def procesiraj_sliko_v2(slika_array):
+def procesiraj_sliko_v3(slika_array):
     return analiziraj_sliko(slika_array)
 
 def ustvari_csv(podatki):
@@ -53,11 +53,11 @@ nalozena_slika = st.file_uploader(
 
 if nalozena_slika is not None:
     image = Image.open(nalozena_slika)
-    slika_rgb = np.array(image) # RGB (Red, Green, Blue) slikovni format
+    slika_rgb = np.array(image)
     
-    with st.spinner("Analiziram listič in izrezujem vzorce (ignoriram < 50 µm)..."):
-        # Uporabimo novo ime funkcije
-        status, slika_oznake, rezultati_kvadratkov = procesiraj_sliko_v2(slika_rgb)
+    with st.spinner("Analiziram listič in izrezujem prave 1x1 cm vzorce (ignoriram < 50 µm)..."):
+        # Kličemo novo ime funkcije
+        status, slika_oznake, rezultati_kvadratkov = procesiraj_sliko_v3(slika_rgb)
         
     if status == "NAPAKA":
         st.error(slika_oznake) 
