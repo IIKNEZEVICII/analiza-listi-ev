@@ -3,7 +3,7 @@ import numpy as np
 import random
 
 def analiziraj_sliko(slika_rgb):
-    """Funkcija za obdelavo vodoobčutljivega lističa in izrez 3 naključnih 1x1cm kvadratkov"""
+    """Funkcija za obdelavo vodoobčutljivega lističa in pameten izrez 3 naključnih 1x1cm kvadratkov"""
     
     # --- KORAK 1: PREPROST IN NARAVEN IZREZ ---
     hsv_orig = cv2.cvtColor(slika_rgb, cv2.COLOR_RGB2HSV)
@@ -50,6 +50,7 @@ def analiziraj_sliko(slika_rgb):
     
     # --- KORAK 2: DETEKCIJA KAPLJIC NA CELEM LISTIČU ---
     siva = cv2.cvtColor(slika_skalirana, cv2.COLOR_RGB2GRAY)
+    
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     siva_clahe = clahe.apply(siva)
     
@@ -88,12 +89,14 @@ def analiziraj_sliko(slika_rgb):
         povrsina_um2 = povrsina_px * um2_na_piko
         if povrsina_um2 > 0:
             premer_um = 2 * np.sqrt(povrsina_um2 / np.pi)
+            
+            # STROG POGOJ: Samo kapljice, ki so 50 µm ali večje
             if premer_um >= 50:
                 cv2.drawContours(maska_filtrirana, [kontura], -1, 255, -1)
                 
     slika_prikaz = cv2.bitwise_and(slika_skalirana, slika_skalirana, mask=maska_skalirana)
     
-    # --- KORAK 4: IZREZ TREH 1cm x 1cm KVADRATKOV ---
+    # --- KORAK 4: PAMETEN IZREZ TREH 1cm x 1cm KVADRATKOV ---
     velikost_kvadrata_px = int(10 * pike_na_mm_cilj) # 10 mm * 60 px/mm = 600 px
     
     if ciljna_sirina_px < velikost_kvadrata_px or ciljna_visina_px < velikost_kvadrata_px:
@@ -102,31 +105,42 @@ def analiziraj_sliko(slika_rgb):
     rezultati_kvadratkov = []
     slika_z_oznakami = slika_prikaz.copy()
     
-    for i in range(3):
-        # Naključna x in y koordinata znotraj meja lističa
+    poskusi = 0
+    najdeni = 0
+    
+    # Iščemo kandidate, dokler ne najdemo 3 dobrih (max 100 poskusov, da preprečimo neskončno zanko)
+    while najdeni < 3 and poskusi < 100:
         x_rand = random.randint(0, ciljna_sirina_px - velikost_kvadrata_px)
         y_rand = random.randint(0, ciljna_visina_px - velikost_kvadrata_px)
         
-        # Narišemo rdeč kvadrat na glavno sliko za prikaz uporabniku
-        cv2.rectangle(slika_z_oznakami, (x_rand, y_rand), (x_rand+velikost_kvadrata_px, y_rand+velikost_kvadrata_px), (255, 0, 0), 10)
+        # Preverimo masko papirja na tem območju
+        test_maska_papirja = maska_skalirana[y_rand:y_rand+velikost_kvadrata_px, x_rand:x_rand+velikost_kvadrata_px]
+        povrsina_papirja_v_kvadratku = cv2.countNonZero(test_maska_papirja)
         
-        # Izrežemo RGB sliko in binarno masko
-        izrez_rgb = slika_prikaz[y_rand:y_rand+velikost_kvadrata_px, x_rand:x_rand+velikost_kvadrata_px]
-        izrez_maska = maska_filtrirana[y_rand:y_rand+velikost_kvadrata_px, x_rand:x_rand+velikost_kvadrata_px]
+        # Pogoj: Kvadratek mora biti vsaj 90% na pravem rumenem lističu (da se izognemo črnim robom)
+        if povrsina_papirja_v_kvadratku > (velikost_kvadrata_px * velikost_kvadrata_px * 0.9):
+            cv2.rectangle(slika_z_oznakami, (x_rand, y_rand), (x_rand+velikost_kvadrata_px, y_rand+velikost_kvadrata_px), (255, 0, 0), 8)
+            
+            izrez_rgb = slika_prikaz[y_rand:y_rand+velikost_kvadrata_px, x_rand:x_rand+velikost_kvadrata_px]
+            izrez_maska = maska_filtrirana[y_rand:y_rand+velikost_kvadrata_px, x_rand:x_rand+velikost_kvadrata_px]
+            
+            konture_izrez, _ = cv2.findContours(izrez_maska, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            st_kapljic = len(konture_izrez)
+            
+            piksli_kapljic = cv2.countNonZero(izrez_maska)
+            pokritost_odstotek = (piksli_kapljic / povrsina_papirja_v_kvadratku) * 100
+            
+            rezultati_kvadratkov.append({
+                "rgb": izrez_rgb,
+                "maska": izrez_maska,
+                "st_kapljic": st_kapljic,
+                "pokritost": pokritost_odstotek
+            })
+            najdeni += 1
+            
+        poskusi += 1
         
-        # Preštejemo kapljice strogo znotraj tega kvadratka
-        konture_izrez, _ = cv2.findContours(izrez_maska, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        st_kapljic = len(konture_izrez)
-        
-        # Izračunamo pokritost (%) za ta 1x1cm kvadrat
-        piksli_kapljic = cv2.countNonZero(izrez_maska)
-        pokritost_odstotek = (piksli_kapljic / (velikost_kvadrata_px ** 2)) * 100
-        
-        rezultati_kvadratkov.append({
-            "rgb": izrez_rgb,
-            "maska": izrez_maska,
-            "st_kapljic": st_kapljic,
-            "pokritost": pokritost_odstotek
-        })
+    if najdeni < 3:
+        return "NAPAKA", "Na lističu ni bilo mogoče najti treh celih 1x1 cm območij (slika je preveč odrezana).", None
         
     return "USPEH", slika_z_oznakami, rezultati_kvadratkov
