@@ -3,7 +3,7 @@ import numpy as np
 import random
 
 def analiziraj_sliko(slika_rgb):
-    """Izboljšana funkcija: točno merilo, odprava šuma, varnostni rob in brez prekrivanja kvadratkov."""
+    """Izboljšana funkcija: točno merilo, odprava šuma, strog odmik od roba, brez prekrivanja, rdeči okvirji in oštevilčenje."""
     
     # --- KORAK 1: NARAVEN IZREZ IN SKALIRANJE ---
     hsv_orig = cv2.cvtColor(slika_rgb, cv2.COLOR_RGB2HSV)
@@ -27,7 +27,6 @@ def analiziraj_sliko(slika_rgb):
     slika_izrez = slika_rgb[y:y+h, x:x+w].copy()
     maska_izrez = maska_papirja_celotna[y:y+h, x:x+w].copy()
     
-    # GARANCIJA MERILA: Daljša stranica je na standardnem WSP lističu vedno 76 mm.
     pike_na_mm_cilj = 60.0
     daljsa_stranica_mm = 76.0
     
@@ -46,7 +45,7 @@ def analiziraj_sliko(slika_rgb):
     um_na_piko = 1000 / pike_na_mm_cilj
     um2_na_piko = um_na_piko ** 2
     
-    # --- KORAK 2: ČISTA DETEKCIJA KAPLJIC (Brez adaptivnega praga) ---
+    # --- KORAK 2: ČISTA DETEKCIJA KAPLJIC ---
     slika_blur = cv2.GaussianBlur(slika_skalirana, (5, 5), 0)
     
     hsv = cv2.cvtColor(slika_blur, cv2.COLOR_RGB2HSV)
@@ -77,32 +76,28 @@ def analiziraj_sliko(slika_rgb):
                 
     slika_prikaz = cv2.bitwise_and(slika_skalirana, slika_skalirana, mask=maska_skalirana)
     
-    # --- KORAK 4: IZREZ TREH 1cm x 1cm KVADRATKOV (Z ROBOM IN BREZ PREKRIVANJA) ---
-    velikost_kvadrata_px = int(10 * pike_na_mm_cilj) # 600 px (Garantirano 1 cm)
-    rob_px = int(1.5 * pike_na_mm_cilj) # 1.5 mm varnostnega odmika od roba lističa (cca 90 px)
+    # --- KORAK 4: IZREZ IN OŠTEVILČENJE TREH 1x1 cm KVADRATKOV ---
+    velikost_kvadrata_px = int(10 * pike_na_mm_cilj) 
+    rob_px = int(2.0 * pike_na_mm_cilj) # Povečan odmik na 2.0 mm od roba (120 px)
     
-    # Če je listič odrezan in premajhen za robove, zmanjšamo rob na 0
     if ciljna_sirina_px < velikost_kvadrata_px + 2*rob_px or ciljna_visina_px < velikost_kvadrata_px + 2*rob_px:
         rob_px = 0
         if ciljna_sirina_px < velikost_kvadrata_px or ciljna_visina_px < velikost_kvadrata_px:
             return "NAPAKA", "Listič je premajhen za izrez 1x1 cm kvadrata.", None
         
     rezultati_kvadratkov = []
-    shranjene_koordinate = [] # Lista za beleženje že postavljenih kvadratkov
+    shranjene_koordinate = [] 
     slika_z_oznakami = slika_prikaz.copy()
     
     poskusi = 0
     najdeni = 0
     
-    while najdeni < 3 and poskusi < 500: # Povečano na 500, ker imamo sedaj strožje pogoje
-        # Random koordinate upoštevajo varnostni rob
+    while najdeni < 3 and poskusi < 1000: # Povečano število poskusov za lažje iskanje
         x_rand = random.randint(rob_px, ciljna_sirina_px - velikost_kvadrata_px - rob_px)
         y_rand = random.randint(rob_px, ciljna_visina_px - velikost_kvadrata_px - rob_px)
         
-        # Preverjanje prekrivanja: pogledamo, če se trenutne koordinate sekajo s shranjenimi
         prekrivanje = False
         for (sx, sy) in shranjene_koordinate:
-            # Če je razdalja po X in Y manjša od širine/višine kvadrata, se kvadrata sekata
             if abs(x_rand - sx) < velikost_kvadrata_px and abs(y_rand - sy) < velikost_kvadrata_px:
                 prekrivanje = True
                 break
@@ -114,11 +109,16 @@ def analiziraj_sliko(slika_rgb):
         test_maska_papirja = maska_skalirana[y_rand:y_rand+velikost_kvadrata_px, x_rand:x_rand+velikost_kvadrata_px]
         povrsina_papirja_v_kvadratku = cv2.countNonZero(test_maska_papirja)
         
-        # Še vedno preverimo, da ne pademo na luknjo v papirju (vsaj 95% rumene podlage)
-        if povrsina_papirja_v_kvadratku > (velikost_kvadrata_px * velikost_kvadrata_px * 0.95):
-            shranjene_koordinate.append((x_rand, y_rand)) # Zabeležimo koordinate za naslednje preverjanje trkov
+        # Strog pogoj: vsaj 99% kvadrata mora biti na rumeni podlagi
+        if povrsina_papirja_v_kvadratku >= (velikost_kvadrata_px * velikost_kvadrata_px * 0.99):
+            shranjene_koordinate.append((x_rand, y_rand)) 
             
-            cv2.rectangle(slika_z_oznakami, (x_rand, y_rand), (x_rand+velikost_kvadrata_px, y_rand+velikost_kvadrata_px), (0, 255, 0), 6)
+            # Debelejši RDEČI okvir (RGB format: 255, 0, 0) in debelina 10
+            cv2.rectangle(slika_z_oznakami, (x_rand, y_rand), (x_rand+velikost_kvadrata_px, y_rand+velikost_kvadrata_px), (255, 0, 0), 10)
+            
+            # Oštevilčenje kvadrata znotraj slike
+            oznaka = str(najdeni + 1)
+            cv2.putText(slika_z_oznakami, oznaka, (x_rand + 20, y_rand + 70), cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 0, 0), 6, cv2.LINE_AA)
             
             izrez_rgb = slika_prikaz[y_rand:y_rand+velikost_kvadrata_px, x_rand:x_rand+velikost_kvadrata_px]
             izrez_maska = maska_filtrirana[y_rand:y_rand+velikost_kvadrata_px, x_rand:x_rand+velikost_kvadrata_px]
@@ -140,6 +140,6 @@ def analiziraj_sliko(slika_rgb):
         poskusi += 1
         
     if najdeni < 3:
-        return "NAPAKA", "Na lističu zaradi robov in prekrivanja ni bilo mogoče najti 3 ločenih 1x1 cm območij.", None
+        return "NAPAKA", "Na lističu zaradi preprečevanja robov in prekrivanja ni bilo mogoče najti 3 ločenih 1x1 cm območij.", None
         
     return "USPEH", slika_z_oznakami, rezultati_kvadratkov
