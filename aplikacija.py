@@ -33,7 +33,7 @@ header {visibility: hidden;}
 """, unsafe_allow_html=True)
 
 # Sprememba imena v _v4 ponovno počisti predpomnilnik na strežniku
-@st.cache_data
+# @st.cache_data
 def procesiraj_sliko_v4(slika_array):
     return analiziraj_sliko(slika_array)
 
