@@ -120,7 +120,7 @@ def analiziraj_sliko(slika_rgb):
         if povrsina_papirja_v_kvadratku > (velikost_kvadrata_px * velikost_kvadrata_px * 0.95):
             shranjene_koordinate.append((x_rand, y_rand))
             
-            cv2.rectangle(slika_z_oznakami, (x_rand, y_rand), (x_rand+velikost_kvadrata_px, y_rand+velikost_kvadrata_px), (0, 255, 0), 6)
+            cv2.rectangle(slika_z_oznakami, (x_rand, y_rand), (x_rand+velikost_kvadrata_px, y_rand+velikost_kvadrata_px), (225, 0, 0), 6)
             
             izrez_rgb = slika_prikaz[y_rand:y_rand+velikost_kvadrata_px, x_rand:x_rand+velikost_kvadrata_px]
             izrez_maska = maska_filtrirana[y_rand:y_rand+velikost_kvadrata_px, x_rand:x_rand+velikost_kvadrata_px]
