@@ -3,10 +3,9 @@ import numpy as np
 import random
 
 def analiziraj_sliko(slika_rgb):
-    """Izboljšana funkcija: točno merilo, odprava šuma, varnostni rob in brez prekrivanja kvadratkov."""
+    """Izboljšana funkcija: konveksna ovojnica za razdrobljen listič, točno merilo in odprava šuma."""
     
     # --- KORAK 1: NARAVEN IZREZ IN SKALIRANJE ---
-    # HSV (Hue, Saturation, Value) barvni prostor za prepoznavo rumenega papirja
     hsv_orig = cv2.cvtColor(slika_rgb, cv2.COLOR_RGB2HSV)
     spodnja_rumena = np.array([15, 80, 80])
     zgornja_rumena = np.array([45, 255, 255])
@@ -20,11 +19,24 @@ def analiziraj_sliko(slika_rgb):
     if not konture:
         return "NAPAKA", "Napaka: Na sliki ni rumenega lističa.", None
         
-    najvecja_kontura = max(konture, key=cv2.contourArea)
-    maska_papirja_celotna = np.zeros(slika_rgb.shape[:2], dtype=np.uint8)
-    cv2.drawContours(maska_papirja_celotna, [najvecja_kontura], -1, 255, -1)
+    # POPRAVEK: Združevanje razdrobljenih rumenih območij zaradi gostih kapljic
+    # 1. Izločimo drobne smeti (šum) in ohranimo le pomembnejše dele lističa (površina > 500)
+    velike_konture = [k for k in konture if cv2.contourArea(k) > 500]
     
-    x, y, w, h = cv2.boundingRect(najvecja_kontura)
+    # Če slučajno noben del ni večji od 500, vzamemo pač tistega največjega
+    if not velike_konture:
+        velike_konture = [max(konture, key=cv2.contourArea)]
+        
+    # 2. Vse točke zložimo v en niz
+    vse_tocke = np.vstack(velike_konture)
+    
+    # 3. Narišemo konveksno ovojnico (elastiko okrog vseh točk), ki zapolni notranje luknje in prekinitve
+    ovojnica = cv2.convexHull(vse_tocke)
+    
+    maska_papirja_celotna = np.zeros(slika_rgb.shape[:2], dtype=np.uint8)
+    cv2.drawContours(maska_papirja_celotna, [ovojnica], -1, 255, -1)
+    
+    x, y, w, h = cv2.boundingRect(ovojnica)
     slika_izrez = slika_rgb[y:y+h, x:x+w].copy()
     maska_izrez = maska_papirja_celotna[y:y+h, x:x+w].copy()
     
@@ -48,7 +60,6 @@ def analiziraj_sliko(slika_rgb):
     um2_na_piko = um_na_piko ** 2
     
     # --- KORAK 2: ČISTA DETEKCIJA KAPLJIC ---
-    # Zmanjšan zameglitveni filter iz (5,5) na (3,3), da se ohranijo male in tanke kapljice
     slika_blur = cv2.GaussianBlur(slika_skalirana, (3, 3), 0)
     
     hsv = cv2.cvtColor(slika_blur, cv2.COLOR_RGB2HSV)
@@ -63,22 +74,18 @@ def analiziraj_sliko(slika_rgb):
     maska_kapljic = cv2.bitwise_and(maska_kapljic, maska_skalirana)
     
     # --- KORAK 3: ODSTRANJEVANJE MANJŠIH OD 50 µm ---
-    # Zamenjano morfološko odpiranje z ZAPIRANJEM. 
-    # Tako podolgovate kapljice ne bodo izbrisane, morebitne razdrobljene piksle iste kapljice pa bomo povezali.
     jedro_zapiranje = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     maska_cista = cv2.morphologyEx(maska_kapljic, cv2.MORPH_CLOSE, jedro_zapiranje)
     
     koncne_konture, _ = cv2.findContours(maska_cista, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     maska_filtrirana = np.zeros_like(maska_cista)
     
-    # Min. površina okrogle kapljice s premerom 50 µm: ploščina = pi * r^2
     min_povrsina_um2 = np.pi * (25 ** 2) 
     
     for kontura in koncne_konture:
         povrsina_px = cv2.contourArea(kontura)
         povrsina_um2 = povrsina_px * um2_na_piko
         
-        # Ohranimo vse, kar ima ustrezno površino (tudi če je kapljica zelo podolgovata in ne-okrogla)
         if povrsina_um2 >= min_povrsina_um2:
             cv2.drawContours(maska_filtrirana, [kontura], -1, 255, -1)
                 
@@ -117,10 +124,11 @@ def analiziraj_sliko(slika_rgb):
         test_maska_papirja = maska_skalirana[y_rand:y_rand+velikost_kvadrata_px, x_rand:x_rand+velikost_kvadrata_px]
         povrsina_papirja_v_kvadratku = cv2.countNonZero(test_maska_papirja)
         
+        # Test povrsine se preverja po narisanem Convex Hull, tako da luknje zaradi kapljic niso več ovira
         if povrsina_papirja_v_kvadratku > (velikost_kvadrata_px * velikost_kvadrata_px * 0.95):
             shranjene_koordinate.append((x_rand, y_rand))
             
-            cv2.rectangle(slika_z_oznakami, (x_rand, y_rand), (x_rand+velikost_kvadrata_px, y_rand+velikost_kvadrata_px), (225, 0, 0), 6)
+            cv2.rectangle(slika_z_oznakami, (x_rand, y_rand), (x_rand+velikost_kvadrata_px, y_rand+velikost_kvadrata_px), (0, 255, 0), 6)
             
             izrez_rgb = slika_prikaz[y_rand:y_rand+velikost_kvadrata_px, x_rand:x_rand+velikost_kvadrata_px]
             izrez_maska = maska_filtrirana[y_rand:y_rand+velikost_kvadrata_px, x_rand:x_rand+velikost_kvadrata_px]
